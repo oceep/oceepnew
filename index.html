@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -50,7 +50,7 @@
       }
     </script>
     <style>
-      body { -ms-overflow-style: none; scrollbar-width: none; }
+      body { -ms-overflow-style: none; scrollbar-width: none; margin: 0; padding: 0; }
       ::-webkit-scrollbar { display: none; }
       
       .markdown-body p { margin-bottom: 0.75em; line-height: 1.6; }
@@ -105,22 +105,22 @@
 <script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "vite": "https://esm.sh/vite@^7.3.0",
-    "react-markdown": "https://esm.sh/react-markdown@^10.1.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
     "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
+    "react-markdown": "https://esm.sh/react-markdown@^10.1.0",
     "remark-gfm": "https://esm.sh/remark-gfm@^4.0.1",
-    "uuid": "https://esm.sh/uuid@^13.0.0",
+    "remark-math": "https://esm.sh/remark-math@^6.0.0",
     "rehype-katex": "https://esm.sh/rehype-katex@^7.0.1",
-    "remark-math": "https://esm.sh/remark-math@^6.0.0"
+    "uuid": "https://esm.sh/uuid@^13.0.0",
+    "vite": "https://esm.sh/vite@^7.3.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
 </head>
-  <body class="overflow-hidden transition-colors duration-500">
+  <body class="h-full overflow-hidden transition-colors duration-500">
     <div id="root" class="h-full"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

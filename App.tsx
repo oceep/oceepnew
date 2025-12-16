@@ -222,9 +222,20 @@ const App: React.FC = () => {
             : msg
         ));
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Gemini Error:", error);
+      let errorMessage = "Đã có lỗi xảy ra. Vui lòng thử lại.";
+      
+      // Provide more specific error if available
+      if (error.message && (error.message.includes("API Key") || error.message.includes("API_KEY"))) {
+        errorMessage = "⚠️ Lỗi: Chưa cấu hình API Key trong file .env hoặc Vercel.";
+      } else if (error.message) {
+         // Optionally show the technical error for debugging
+         errorMessage = `Lỗi: ${error.message}`;
+      }
+
       updateCurrentSessionMessages(prev => prev.map(msg => 
-        msg.id === aiMsgId ? { ...msg, content: "Đã có lỗi xảy ra. Vui lòng thử lại." } : msg
+        msg.id === aiMsgId ? { ...msg, content: errorMessage } : msg
       ));
     } finally {
       setIsStreaming(false);
@@ -302,11 +313,11 @@ const App: React.FC = () => {
   const currentMessages = getCurrentSession()?.messages || [];
 
   return (
-    <div className={`relative flex h-full overflow-hidden transition-colors duration-500 ${getThemeClasses()}`} style={theme === 'ocean' ? { backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1173&auto=format&fit=crop')" } : {}}>
+    <div className={`relative flex h-screen w-screen overflow-hidden transition-colors duration-500 ${getThemeClasses()}`} style={theme === 'ocean' ? { backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1173&auto=format&fit=crop')" } : {}}>
       {theme === 'ocean' && <div className="absolute inset-0 bg-black/40 pointer-events-none" />}
 
       {/* Sidebar (Inline implementation) */}
-      <div className={`fixed inset-y-0 left-0 z-40 w-72 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0 bg-gray-950 border-r border-white/10 flex flex-col shadow-2xl`}>
+      <div className={`fixed inset-y-0 left-0 z-40 w-72 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0 bg-gray-950 border-r border-white/10 flex flex-col shadow-2xl h-full`}>
         <div className="p-4 flex flex-col gap-4">
            {/* Sidebar Header with Close Button for Mobile */}
            <div className="flex justify-between items-center lg:hidden">
