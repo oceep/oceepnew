@@ -8,7 +8,9 @@ declare const process: any;
 export default defineConfig({
   plugins: [react()],
   define: {
-    // This allows the Cloudflare/Vercel environment variable API_KEY to be accessed via process.env.API_KEY in the code
-    'process.env.API_KEY': JSON.stringify(process.env.API_KEY)
+    // Define process.env to ensure it exists as an object, preventing crash on access
+    'process.env': {
+      API_KEY: process.env.API_KEY || ''
+    }
   }
 })

@@ -34,8 +34,15 @@ declare const process: {
 };
 
 // Initialize Gemini Client
-// Note: API Key must be in process.env.API_KEY
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// We assume process.env.API_KEY is replaced by Vite.
+// If missing, we default to empty string to prevent module crash, 
+// though actual API calls will fail gracefully later.
+const apiKey = process.env.API_KEY || '';
+let ai: GoogleGenAI | null = null;
+
+if (apiKey) {
+  ai = new GoogleGenAI({ apiKey: apiKey });
+}
 
 // Keywords that trigger auto-search
 const SEARCH_TRIGGERS = [
@@ -61,6 +68,10 @@ export const streamGeminiResponse = async (
   imageBase64?: string
 ): Promise<any> => {
   
+  if (!ai) {
+    throw new Error("API Key is missing. Please set the API_KEY environment variable.");
+  }
+
   const modelId = 'gemini-2.5-flash';
 
   const contents = history.map(msg => {
