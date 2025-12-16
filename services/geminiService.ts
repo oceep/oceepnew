@@ -1,5 +1,37 @@
-import { GoogleGenAI } from "@google/genai";
-import { ChatMessage, Role } from "../types";
+import { GoogleGenAI, GroundingMetadata } from "@google/genai";
+
+// --- Types (Merged from types.ts) ---
+
+export enum Role {
+  USER = 'user',
+  MODEL = 'model'
+}
+
+export interface ChatMessage {
+  id: string;
+  role: Role;
+  content: string;
+  image?: string; // Base64 string for image display
+  isStreaming?: boolean;
+  groundingMetadata?: GroundingMetadata;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+}
+
+// --- Service ---
+
+// Type declaration to fix Vercel/TS build error without installing @types/node
+declare const process: {
+  env: {
+    API_KEY: string;
+    [key: string]: string | undefined;
+  }
+};
 
 // Initialize Gemini Client
 // Note: API Key must be in process.env.API_KEY
@@ -32,9 +64,6 @@ export const streamGeminiResponse = async (
   const modelId = 'gemini-2.5-flash';
 
   const contents = history.map(msg => {
-    // If history has images, technically we should pass them, but for simplicity
-    // and token saving in this demo, we might just pass text for history
-    // or handle the current request's image specifically.
     return {
       role: msg.role,
       parts: [{ text: msg.content }]
@@ -73,7 +102,6 @@ export const streamGeminiResponse = async (
   let systemInstruction = "You are Oceep, a helpful and modern AI assistant. Answer the user's question comprehensively but concisely. Do not ramble. If the user asks for current information (weather, news, time, etc.), use the search tool naturally to provide accurate data. If using search results, cite sources clearly.";
 
   // Modify instruction for simple date/time queries to avoid clutter
-  // Check for both accented and unaccented variations
   const isDateQuery = [
     'ngày', 'giờ', 'tháng', 'năm', 'hôm nay',
     'ngay', 'gio', 'thang', 'nam', 'hom nay'

@@ -1,10 +1,103 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { MessageBubble } from './components/MessageBubble';
-import { streamGeminiResponse } from './services/geminiService';
-import { ChatMessage, ChatSession, Role } from './types';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { v4 as uuidv4 } from 'uuid';
 import { GroundingMetadata } from '@google/genai';
+import { streamGeminiResponse, ChatMessage, ChatSession, Role } from './services/geminiService';
+
+// --- Embedded Components ---
+
+interface MessageBubbleProps {
+  message: ChatMessage;
+  theme: 'dark' | 'light' | 'ocean';
+}
+
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message, theme }) => {
+  const isUser = message.role === Role.USER;
+  const sources = message.groundingMetadata?.groundingChunks?.filter(c => c.web?.uri && c.web?.title) || [];
+  
+  const textColorClass = isUser 
+    ? 'text-white' 
+    : theme === 'light' 
+      ? 'text-gray-900' 
+      : 'text-gray-100';
+
+  return (
+    <div className={`w-full mb-6 flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div 
+        className={`relative rounded-3xl px-5 py-3 flex flex-col gap-2 animate-pop-in ${
+          isUser 
+            ? 'bg-blue-600 shadow-md origin-bottom-right ml-auto w-fit max-w-[85%]' 
+            : 'bg-transparent origin-bottom-left w-full max-w-[90%] lg:max-w-[80%]' 
+        }`}
+      >
+        {/* Image Attachment (User) */}
+        {message.image && (
+          <div className="mb-2">
+            <img src={message.image} alt="User upload" className="max-w-full h-auto max-h-64 rounded-lg border border-white/20" />
+          </div>
+        )}
+
+        {/* Content */}
+        <div className={`markdown-body ${textColorClass} ${message.isStreaming ? 'cursor-blink' : ''}`}>
+            {message.content === '' && message.isStreaming ? (
+               <span className="opacity-0">|</span> 
+            ) : (
+              <ReactMarkdown 
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+                components={{
+                  code({node, inline, className, children, ...props}: any) {
+                    return !inline ? (
+                      <div className="my-4 rounded-lg overflow-hidden bg-[#1e1e1e] border border-gray-700 shadow-xl w-full text-white">
+                         <div className="flex items-center justify-between px-4 py-2 bg-[#2d2d2d] border-b border-gray-700">
+                             <span className="text-xs text-gray-400 font-mono font-bold uppercase">Code</span>
+                         </div>
+                         <div className="p-4 overflow-x-auto bg-[#1e1e1e]">
+                             <code className="font-mono text-sm text-green-400 whitespace-pre" {...props}>{children}</code>
+                         </div>
+                      </div>
+                    ) : (
+                      <code className={`font-mono rounded px-1 py-0.5 ${isUser ? 'bg-white/20' : (theme === 'light' ? 'bg-gray-200 text-red-600' : 'bg-gray-700/50')}`} {...props}>{children}</code>
+                    )
+                  },
+                  p: ({node, ...props}) => <p className={textColorClass} {...props} />,
+                  li: ({node, ...props}) => <li className={textColorClass} {...props} />,
+                  h1: ({node, ...props}) => <h1 className={`font-bold text-2xl mb-2 ${textColorClass}`} {...props} />,
+                  h2: ({node, ...props}) => <h2 className={`font-bold text-xl mb-2 ${textColorClass}`} {...props} />,
+                  strong: ({node, ...props}) => <strong className="font-bold text-blue-400" {...props} />
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            )}
+        </div>
+
+        {/* Sources */}
+        {sources.length > 0 && (
+          <div className={`mt-2 pt-2 border-t flex flex-wrap gap-2 ${isUser ? 'border-white/20' : (theme === 'light' ? 'border-gray-300' : 'border-white/10')}`}>
+            {sources.map((chunk, idx) => (
+              <a 
+                key={idx} 
+                href={chunk.web?.uri} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="source-pill"
+                title={chunk.web?.title}
+              >
+                 {chunk.web?.title}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- Main App ---
 
 type Theme = 'dark' | 'light' | 'ocean';
 
@@ -141,16 +234,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      if (!e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-      // If Shift+Enter, let default behavior happen (new line)
-    }
-  };
-
   const handleRandomPrompt = () => {
     const prompts = [
       "Kể cho tôi nghe một câu chuyện cười",
@@ -222,7 +305,7 @@ const App: React.FC = () => {
     <div className={`relative flex h-full overflow-hidden transition-colors duration-500 ${getThemeClasses()}`} style={theme === 'ocean' ? { backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1173&auto=format&fit=crop')" } : {}}>
       {theme === 'ocean' && <div className="absolute inset-0 bg-black/40 pointer-events-none" />}
 
-      {/* Sidebar */}
+      {/* Sidebar (Inline implementation) */}
       <div className={`fixed inset-y-0 left-0 z-40 w-72 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0 bg-gray-950 border-r border-white/10 flex flex-col shadow-2xl`}>
         <div className="p-4 flex flex-col gap-4">
            {/* Sidebar Header with Close Button for Mobile */}
