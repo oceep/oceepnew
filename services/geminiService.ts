@@ -72,7 +72,7 @@ export const streamGeminiResponse = async (
     throw new Error("API Key is missing. Please set the API_KEY environment variable.");
   }
 
-  const modelId = 'gemini-2.5-flash';
+  const modelId = 'gemini-2.5-flash-lite';
 
   const contents = history.map(msg => {
     return {
