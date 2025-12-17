@@ -1,24 +1,133 @@
-import puter from '@heyputer/puter.js';
+import { GoogleGenAI, GroundingMetadata } from "@google/genai";
 
-// Define the response structure for TypeScript safety
-interface PuterResponse {
-  message?: {
-    content: string;
-  };
-  text?: string;
-  [key: string]: any;
+// --- Types (Merged from types.ts) ---
+
+export enum Role {
+  USER = 'user',
+  MODEL = 'model'
 }
 
-export const sendMessageToGemini = async (prompt: string): Promise<string> => {
-  try {
-    const response = await puter.ai.chat(prompt, {
-      model: 'gemini-3-pro-preview',
-    }) as PuterResponse;
+export interface ChatMessage {
+  id: string;
+  role: Role;
+  content: string;
+  image?: string; // Base64 string for image display
+  isStreaming?: boolean;
+  groundingMetadata?: GroundingMetadata;
+}
 
-    // Puter returns data in a specific structure, we extract the text here
-    return response?.message?.content || response?.text || "No response text found.";
-  } catch (error) {
-    console.error("Gemini Service Error:", error);
-    throw new Error("Failed to connect to Gemini via Puter.js");
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+}
+
+// --- Service ---
+
+// Type declaration to fix Vercel/TS build error without installing @types/node
+declare const process: {
+  env: {
+    API_KEY: string;
+    [key: string]: string | undefined;
   }
+};
+
+// Initialize Gemini Client
+// We assume process.env.API_KEY is replaced by Vite.
+// If missing, we default to empty string to prevent module crash, 
+// though actual API calls will fail gracefully later.
+const apiKey = process.env.API_KEY || '';
+let ai: GoogleGenAI | null = null;
+
+if (apiKey) {
+  ai = new GoogleGenAI({ apiKey: apiKey });
+}
+
+// Keywords that trigger auto-search
+const SEARCH_TRIGGERS = [
+  // Accented Vietnamese
+  'hôm nay', 'ngày mai', 'thời tiết', 'tin tức', 'giá', 'tỷ giá', 
+  'ở đâu', 'địa chỉ', 'kết quả', 'bao nhiêu', 'ngày nào', 
+  'sự kiện', 'mới nhất', 'lịch', 'ngày', 'giờ', 'tháng', 'năm',
+  
+  // Unaccented Vietnamese
+  'hom nay', 'ngay mai', 'thoi tiet', 'tin tuc', 'gia', 'ty gia',
+  'o dau', 'dia chi', 'ket qua', 'bao nhieu', 'ngay nao',
+  'su kien', 'moi nhat', 'lich', 'ngay', 'gio', 'thang', 'nam',
+
+  // English
+  'today', 'tomorrow', 'weather', 'news', 'price', 'rate', 
+  'where', 'location', 'latest', 'schedule'
+];
+
+export const streamGeminiResponse = async (
+  history: ChatMessage[],
+  newMessage: string,
+  userEnabledSearch: boolean,
+  imageBase64?: string
+): Promise<any> => {
+  
+  if (!ai) {
+    throw new Error("API Key is missing. Please set the API_KEY environment variable.");
+  }
+
+  const modelId = 'gemini-2.5-flash-lite';
+
+  const contents = history.map(msg => {
+    return {
+      role: msg.role,
+      parts: [{ text: msg.content }]
+    };
+  });
+
+  // Prepare current message parts
+  const currentParts: any[] = [{ text: newMessage }];
+  
+  if (imageBase64) {
+    // extract base64 data, removing the "data:image/png;base64," prefix if present
+    const cleanBase64 = imageBase64.split(',')[1] || imageBase64;
+    const mimeType = imageBase64.match(/data:([^;]+);/)?.[1] || 'image/jpeg';
+    
+    currentParts.unshift({
+      inlineData: {
+        mimeType: mimeType,
+        data: cleanBase64
+      }
+    });
+  }
+
+  contents.push({
+    role: Role.USER,
+    parts: currentParts
+  });
+
+  // Auto-detect if search is needed based on keywords
+  const lowerMsg = newMessage.toLowerCase();
+  const shouldAutoSearch = SEARCH_TRIGGERS.some(keyword => lowerMsg.includes(keyword));
+  const useTools = userEnabledSearch || shouldAutoSearch;
+
+  const tools = useTools ? [{ googleSearch: {} }] : [];
+
+  // Base system instruction
+  let systemInstruction = "You are Oceep, a helpful and modern AI assistant. Answer the user's question comprehensively but concisely. Do not ramble. If the user asks for current information (weather, news, time, etc.), use the search tool naturally to provide accurate data. If using search results, cite sources clearly.";
+
+  // Modify instruction for simple date/time queries to avoid clutter
+  const isDateQuery = [
+    'ngày', 'giờ', 'tháng', 'năm', 'hôm nay',
+    'ngay', 'gio', 'thang', 'nam', 'hom nay'
+  ].some(k => lowerMsg.includes(k));
+
+  if (isDateQuery) {
+    systemInstruction += " For queries about the current date, time, or calendar, provide the answer directly and hide the source citations in the text.";
+  }
+
+  return await ai.models.generateContentStream({
+    model: modelId,
+    contents: contents,
+    config: {
+      tools: tools,
+      systemInstruction: systemInstruction,
+    },
+  });
 };
