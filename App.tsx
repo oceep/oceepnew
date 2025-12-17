@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { sendMessageToGemini } from './services/gemini';
-import './App.css'; // Assuming you have basic styles
+import { sendMessageToGemini } from './services/geminiService'; // Fixed import path
+import './App.css';
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -16,22 +16,22 @@ function App() {
     e.preventDefault();
     if (!input.trim()) return;
 
-    // 1. Add user message to UI
+    // Add User Message
     const userMessage: ChatMessage = { role: 'user', text: input };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     try {
-      // 2. Call the new Puter.js service
+      // Call Service
       const responseText = await sendMessageToGemini(input);
 
-      // 3. Add Gemini's response to UI
+      // Add AI Message
       const aiMessage: ChatMessage = { role: 'model', text: responseText };
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
       console.error(error);
-      const errorMessage: ChatMessage = { role: 'model', text: "Sorry, something went wrong with Gemini." };
+      const errorMessage: ChatMessage = { role: 'model', text: "Error: Could not reach Gemini." };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
@@ -39,35 +39,46 @@ function App() {
   };
 
   return (
-    <div className="app-container">
-      <header>
-        <h1>Gemini 3 Pro (via Puter.js)</h1>
-      </header>
-
-      <div className="chat-window">
-        {messages.length === 0 && (
-          <p className="placeholder">Ask Gemini 3 Pro anything...</p>
-        )}
-        
+    <div style={{ maxWidth: '600px', margin: '0 auto', padding: '20px' }}>
+      <h1>Gemini 3 Pro Chat</h1>
+      
+      <div style={{ 
+        border: '1px solid #ccc', 
+        borderRadius: '8px', 
+        height: '400px', 
+        overflowY: 'auto', 
+        padding: '10px', 
+        marginBottom: '20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px'
+      }}>
         {messages.map((msg, index) => (
-          <div key={index} className={`message ${msg.role}`}>
-            <strong>{msg.role === 'user' ? 'You' : 'Gemini'}:</strong>
-            <p style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</p>
+          <div key={index} style={{
+            alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+            backgroundColor: msg.role === 'user' ? '#007bff' : '#f1f1f1',
+            color: msg.role === 'user' ? 'white' : 'black',
+            padding: '10px',
+            borderRadius: '10px',
+            maxWidth: '80%'
+          }}>
+            <strong>{msg.role === 'user' ? 'You' : 'Gemini'}: </strong>
+            {msg.text}
           </div>
         ))}
-        
-        {isLoading && <div className="loading">Thinking...</div>}
+        {isLoading && <div><em>Gemini is typing...</em></div>}
       </div>
 
-      <form onSubmit={handleSubmit} className="input-area">
+      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px' }}>
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message here..."
+          placeholder="Ask something..."
+          style={{ flex: 1, padding: '10px' }}
           disabled={isLoading}
         />
-        <button type="submit" disabled={isLoading}>
+        <button type="submit" disabled={isLoading} style={{ padding: '10px 20px' }}>
           Send
         </button>
       </form>
