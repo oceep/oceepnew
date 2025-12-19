@@ -25,7 +25,7 @@ export class LiveClient {
 
 // --- Image Generation Stub ---
 
-export const generateImageWithPuter = async (prompt: string): Promise<string> => {
+export const generateImageWithPuter = async (_prompt: string): Promise<string> => {
     throw new Error("Tính năng tạo ảnh chưa được hỗ trợ trên backend hiện tại.");
 };
 
@@ -34,7 +34,7 @@ export const generateImageWithPuter = async (prompt: string): Promise<string> =>
 export const streamGeminiResponse = async function* (
   history: ChatMessage[],
   newMessage: string,
-  userEnabledSearch: boolean,
+  _userEnabledSearch: boolean,
   imageBase64?: string,
   isTutorMode: boolean = false,
   modelMode: ModelMode = 'fast'
