@@ -232,10 +232,10 @@ const App: React.FC = () => {
   const handleRandomPrompt = () => {
     const prompts = [
       "Kể cho tôi nghe một câu chuyện cười",
-      "Viết một đoạn code Python để in ra dãy số Fibonacci",
-      "Tóm tắt tin tức công nghệ mới nhất hôm nay",
+      "Viết code Python in dãy số Fibonacci",
+      "Tóm tắt tin tức công nghệ mới nhất",
       "Công thức làm món Phở Bò ngon?",
-      "Giải thích thuyết tương đối rộng cho trẻ em"
+      "Giải thích thuyết tương đối cho trẻ em"
     ];
     const random = prompts[Math.floor(Math.random() * prompts.length)];
     handleSend(random);
@@ -363,9 +363,14 @@ const App: React.FC = () => {
         <main className="flex-1 flex flex-col p-4 overflow-hidden">
              {currentMessages.length === 0 ? (
                 <div className="flex-grow flex flex-col items-center justify-center text-center animate-fade-up">
-                     <h1 className={`text-5xl font-bold mb-4 opacity-90 ${theme === 'light' ? 'text-gray-800' : 'text-white'}`}>
+                     <h1 className={`text-5xl font-bold mb-8 opacity-90 ${theme === 'light' ? 'text-gray-800' : 'text-white'}`}>
                         {new Date().getHours() < 12 ? 'Chào buổi sáng' : new Date().getHours() < 18 ? 'Chào buổi chiều' : 'Chào buổi tối'}
                      </h1>
+                     <div className="flex flex-wrap justify-center gap-3 max-w-2xl">
+                        <button onClick={handleRandomPrompt} className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${theme === 'light' ? 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50' : 'bg-white/10 text-white hover:bg-white/20'}`}>
+                           Gợi ý ngẫu nhiên
+                        </button>
+                     </div>
                 </div>
              ) : (
                 <div key={currentSessionId} className="w-full max-w-3xl mx-auto flex-grow mb-4 overflow-y-auto px-2 animate-fade-up">
