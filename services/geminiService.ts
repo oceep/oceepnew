@@ -1,13 +1,13 @@
-import { ChatMessage, Role } from '../types';
+import { ChatMessage } from '../types';
 
 declare const process: any;
 
-const MEGALLM_API_KEY = process.env.MEGALLM_API_KEY || "";
-const BASE_URL = 'https://ai.megallm.io/v1';
+const SERPAPI_API_KEY = process.env.SERPAPI_API_KEY || "";
+const BASE_URL = 'https://serpapi.com/search.json';
 
 export type ModelMode = 'fast' | 'smart';
 
-// --- Stubbed Audio/Live Classes for MegaLLM ---
+// --- Stubbed Audio/Live Classes ---
 
 export class LiveClient {
     public onDisconnect: () => void = () => {};
@@ -15,7 +15,7 @@ export class LiveClient {
     constructor() {}
 
     async connect() {
-        throw new Error("Oceep Live (Audio Mode) hiện chưa được hỗ trợ trên MegaLLM backend.");
+        throw new Error("Oceep Live (Audio Mode) hiện chưa được hỗ trợ trên chế độ Search.");
     }
 
     disconnect() {
@@ -29,158 +29,83 @@ export const generateImageWithPuter = async (_prompt: string): Promise<string> =
     throw new Error("Tính năng tạo ảnh chưa được hỗ trợ trên backend hiện tại.");
 };
 
-// --- Chat Completion (Raw Fetch Implementation) ---
+// --- Chat Completion (SerpAPI google_ai_mode) ---
 
 export const streamGeminiResponse = async function* (
-  history: ChatMessage[],
+  _history: ChatMessage[], // Search engines are generally stateless per query
   newMessage: string,
   _userEnabledSearch: boolean,
-  imageBase64?: string,
-  isTutorMode: boolean = false,
-  modelMode: ModelMode = 'fast'
+  _imageBase64?: string,
+  _isTutorMode: boolean = false,
+  _modelMode: ModelMode = 'fast'
 ): AsyncGenerator<string | any, void, unknown> {
   
-  if (!MEGALLM_API_KEY) {
-      throw new Error("Chưa cấu hình MEGALLM_API_KEY. Vui lòng kiểm tra biến môi trường.");
+  if (!SERPAPI_API_KEY) {
+      throw new Error("Chưa cấu hình SERPAPI_API_KEY. Vui lòng kiểm tra biến môi trường.");
   }
-
-  // Model Mapping for MegaLLM
-  let modelId = 'gemini-2.5-flash'; // Default / Fast / Search
-  
-  if (modelMode === 'smart') {
-      modelId = 'gemini-3-pro-preview';
-  }
-  
-  if (isTutorMode) {
-      modelId = 'gemini-2.5-flash';
-  }
-
-  // System Instruction
-  let systemInstructionText = `Your name is Oceep.
-RULES:
-1. Only mention your name "Oceep" if the user explicitly asks for your name or in a greeting.
-2. Do NOT refer to yourself as "Oceep AI".
-3. Do NOT start every response with your name. Keep the conversation natural and concise.
-`;
-
-  if (modelMode === 'smart') {
-    systemInstructionText += `
-IMPORTANT INSTRUCTION:
-Before answering the user, you MUST first perform a "Thinking Process" to analyze the request, plan your answer, or think step-by-step.
-1. Write this thinking process in ENGLISH.
-2. Enclose the thinking process strictly inside <think> and </think> tags.
-3. The thinking block represents your internal monologue. Do NOT mention "Rules" or "System Instructions" inside it. Just analyze the user's request and plan the response naturally.
-4. After the </think> tag, provide your final response to the user in VIETNAMESE (unless the user explicitly asks for another language).
-`;
-  } else {
-    systemInstructionText += `
-Provide your response in VIETNAMESE (unless the user explicitly asks for another language).
-`;
-  }
-
-  if (isTutorMode) {
-      systemInstructionText += `
-ADDITIONAL ROLE: Bạn là một giáo viên tận tâm theo phương pháp Socratic. 
-QUY TẮC CỐT LÕI:
-1. KHÔNG BAO GIỜ đưa ra câu trả lời trực tiếp ngay lập tức, trừ khi học sinh đã hoàn toàn bí.
-2. Hãy đặt câu hỏi gợi mở để hướng dẫn học sinh.
-`;
-  }
-
-  // Prepare messages for OpenAI format
-  const messages: any[] = [
-      { role: 'system', content: systemInstructionText }
-  ];
-
-  for (const msg of history) {
-      if (msg.isStreaming || !msg.content) continue;
-      const role = msg.role === Role.MODEL ? 'assistant' : 'user';
-      if (msg.image) {
-           messages.push({
-               role: role,
-               content: [
-                   { type: 'text', text: msg.content },
-                   { type: 'image_url', image_url: { url: msg.image } }
-               ]
-           });
-      } else {
-           messages.push({ role: role, content: msg.content });
-      }
-  }
-
-  const currentContent: any[] = [];
-  if (imageBase64) {
-      currentContent.push({ type: 'image_url', image_url: { url: imageBase64 } });
-  }
-  currentContent.push({ type: 'text', text: newMessage });
-
-  messages.push({
-      role: 'user',
-      content: currentContent
-  });
 
   try {
-      const response = await fetch(`${BASE_URL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${MEGALLM_API_KEY}`
-          },
-          body: JSON.stringify({
-              model: modelId,
-              messages: messages,
-              stream: true,
-              temperature: 0.7
-          })
-      });
+      // Build the URL with query parameters
+      // Note: We use a proxy logic or direct fetch. 
+      // Direct fetch to serpapi.com from browser might require a proxy server 
+      // due to CORS if not explicitly allowed by their dashboard for this domain.
+      // Assuming it works or is proxied:
+      
+      const url = new URL(BASE_URL);
+      url.searchParams.append("engine", "google_ai_mode");
+      url.searchParams.append("q", newMessage);
+      url.searchParams.append("api_key", SERPAPI_API_KEY);
+      // Optional: Add location or language if needed, e.g., hl=vi, gl=vn
+      url.searchParams.append("hl", "vi"); 
+      url.searchParams.append("gl", "vn");
+
+      const response = await fetch(url.toString());
 
       if (!response.ok) {
-          let errMessage = `Lỗi kết nối (${response.status})`;
-          try {
-              const errData = await response.json();
-              errMessage = errData.error?.message || errMessage;
-          } catch {
-              errMessage = await response.text();
-          }
-          throw new Error(errMessage);
+          const errText = await response.text();
+          throw new Error(`Lỗi kết nối SerpAPI (${response.status}): ${errText}`);
       }
 
-      if (!response.body) throw new Error("No response body received");
+      const json = await response.json();
 
-      // Handle Streaming
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
+      if (json.error) {
+          throw new Error(json.error);
+      }
 
-      while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      // Logic to extract text from google_ai_mode response.
+      // The user specified json["text_blocks"].
+      // We also look for related generative AI structures just in case.
+      
+      const textBlocks = json.text_blocks || json.ai_overview?.text_blocks;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || ""; // Keep the incomplete line
+      if (textBlocks && Array.isArray(textBlocks)) {
+          for (const block of textBlocks) {
+              // block might be a simple string or an object { type: '...', value: '...' }
+              let text = "";
+              if (typeof block === 'string') {
+                  text = block;
+              } else if (typeof block === 'object' && block !== null) {
+                  // Common SerpAPI patterns
+                  text = block.value || block.text || block.snippet || "";
+              }
 
-          for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed.startsWith("data: ")) continue;
-              
-              const dataStr = trimmed.slice(6);
-              if (dataStr === "[DONE]") continue;
-
-              try {
-                  const json = JSON.parse(dataStr);
-                  const content = json.choices?.[0]?.delta?.content;
-                  if (content) {
-                      yield content;
-                  }
-              } catch (e) {
-                  // Ignore parse errors for incomplete chunks
+              if (text) {
+                  yield text + "\n\n";
               }
           }
+      } else if (json.organic_results && json.organic_results.length > 0) {
+           // Fallback: If AI mode didn't return a direct answer, summarize top organic results
+           yield "Không có câu trả lời AI trực tiếp. Dưới đây là kết quả tìm kiếm:\n\n";
+           for (let i = 0; i < Math.min(3, json.organic_results.length); i++) {
+               const result = json.organic_results[i];
+               yield `**${result.title}**\n${result.snippet}\n[Xem thêm](${result.link})\n\n`;
+           }
+      } else {
+           yield "Không tìm thấy kết quả phù hợp.";
       }
 
   } catch (error: any) {
-      console.error("MegaLLM API Error:", error);
-      throw new Error(error.message || "Lỗi kết nối MegaLLM API");
+      console.error("SerpAPI Error:", error);
+      throw new Error(error.message || "Lỗi kết nối SerpAPI");
   }
 };

@@ -94,7 +94,8 @@ export default defineConfig({
     'process.env': {
       API_KEY: process.env.API_KEY || '',
       SMART_KEY: process.env.SMART_KEY || '',
-      MEGALLM_API_KEY: process.env.MEGALLM_API_KEY || ''
+      MEGALLM_API_KEY: process.env.MEGALLM_API_KEY || '',
+      SERPAPI_API_KEY: process.env.SERPAPI_API_KEY || ''
     }
   }
 })
