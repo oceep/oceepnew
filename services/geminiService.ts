@@ -1,133 +1,168 @@
-import { GoogleGenAI, GroundingMetadata } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { ChatMessage, Role } from '../types';
 
-// --- Types (Merged from types.ts) ---
+const API_KEY = "AIzaSyBodR21AztBA9dW-XqfJy22FKiwOWPXOfU";
+const ai = new GoogleGenAI({ apiKey: API_KEY });
 
-export enum Role {
-  USER = 'user',
-  MODEL = 'model'
-}
+export type ModelMode = 'fast' | 'smart';
 
-export interface ChatMessage {
-  id: string;
-  role: Role;
-  content: string;
-  image?: string; // Base64 string for image display
-  isStreaming?: boolean;
-  groundingMetadata?: GroundingMetadata;
-}
-
-export interface ChatSession {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-  createdAt: number;
-}
-
-// --- Service ---
-
-// Type declaration to fix Vercel/TS build error without installing @types/node
-declare const process: {
-  env: {
-    API_KEY: string;
-    [key: string]: string | undefined;
-  }
+// Helper to convert blob to base64 if needed, but we deal with base64 strings mostly
+const getBase64Parts = (base64String: string) => {
+    const match = base64String.match(/^data:(.+);base64,(.+)$/);
+    if (!match) return null;
+    return {
+        mimeType: match[1],
+        data: match[2]
+    };
 };
 
-// Initialize Gemini Client
-// We assume process.env.API_KEY is replaced by Vite.
-// If missing, we default to empty string to prevent module crash, 
-// though actual API calls will fail gracefully later.
-const apiKey = process.env.API_KEY || '';
-let ai: GoogleGenAI | null = null;
+export const generateImageWithPuter = async (prompt: string): Promise<string> => {
+    // Replaced with Google Gemini/Imagen generation
+    // Using gemini-2.5-flash-image or imagen if available.
+    // Since we are in the 'geminiService', we'll use the ai client.
+    try {
+        const response = await ai.models.generateImages({
+            model: 'imagen-3.0-generate-001',
+            prompt: prompt,
+            config: {
+                numberOfImages: 1,
+                aspectRatio: '1:1',
+                outputMimeType: 'image/jpeg'
+            }
+        });
+        
+        const b64 = response.generatedImages?.[0]?.image?.imageBytes;
+        if (b64) return `data:image/jpeg;base64,${b64}`;
+        throw new Error("Không thể tạo ảnh. Vui lòng thử lại.");
+    } catch (error: any) {
+        console.error("Image Gen Error:", error);
+        throw new Error(error.message || "Lỗi tạo ảnh");
+    }
+};
 
-if (apiKey) {
-  ai = new GoogleGenAI({ apiKey: apiKey });
-}
-
-// Keywords that trigger auto-search
-const SEARCH_TRIGGERS = [
-  // Accented Vietnamese
-  'hôm nay', 'ngày mai', 'thời tiết', 'tin tức', 'giá', 'tỷ giá', 
-  'ở đâu', 'địa chỉ', 'kết quả', 'bao nhiêu', 'ngày nào', 
-  'sự kiện', 'mới nhất', 'lịch', 'ngày', 'giờ', 'tháng', 'năm',
-  
-  // Unaccented Vietnamese
-  'hom nay', 'ngay mai', 'thoi tiet', 'tin tuc', 'gia', 'ty gia',
-  'o dau', 'dia chi', 'ket qua', 'bao nhieu', 'ngay nao',
-  'su kien', 'moi nhat', 'lich', 'ngay', 'gio', 'thang', 'nam',
-
-  // English
-  'today', 'tomorrow', 'weather', 'news', 'price', 'rate', 
-  'where', 'location', 'latest', 'schedule'
-];
-
-export const streamGeminiResponse = async (
+export const streamGeminiResponse = async function* (
   history: ChatMessage[],
   newMessage: string,
   userEnabledSearch: boolean,
-  imageBase64?: string
-): Promise<any> => {
+  imageBase64?: string,
+  isTutorMode: boolean = false,
+  modelMode: ModelMode = 'fast'
+): AsyncGenerator<string | any, void, unknown> {
   
-  if (!ai) {
-    throw new Error("API Key is missing. Please set the API_KEY environment variable.");
+  // Model Mapping
+  let modelId = 'gemini-3-flash-preview'; // Default / Fast
+  if (modelMode === 'smart') {
+      modelId = 'gemini-3-pro-preview';
+  }
+  // Tutor always uses flash for speed in this context unless overridden
+  if (isTutorMode) {
+      modelId = 'gemini-3-flash-preview';
   }
 
-  const modelId = 'gemini-2.5-flash-lite';
-
-  const contents = history.map(msg => {
-    return {
-      role: msg.role,
-      parts: [{ text: msg.content }]
-    };
-  });
-
-  // Prepare current message parts
-  const currentParts: any[] = [{ text: newMessage }];
+  // Configuration
+  const config: any = {};
   
-  if (imageBase64) {
-    // extract base64 data, removing the "data:image/png;base64," prefix if present
-    const cleanBase64 = imageBase64.split(',')[1] || imageBase64;
-    const mimeType = imageBase64.match(/data:([^;]+);/)?.[1] || 'image/jpeg';
-    
-    currentParts.unshift({
-      inlineData: {
-        mimeType: mimeType,
-        data: cleanBase64
-      }
+  // System Instruction
+  let systemInstructionText = `You are Oceep AI.`;
+
+  // Only apply Thinking Process for Smart mode (Tu Duy)
+  if (modelMode === 'smart') {
+    systemInstructionText += `
+IMPORTANT INSTRUCTION:
+Before answering the user, you MUST first perform a "Thinking Process" to analyze the request, plan your answer, or think step-by-step.
+1. Write this thinking process in ENGLISH.
+2. Enclose the thinking process strictly inside <think> and </think> tags.
+3. After the </think> tag, provide your final response to the user in VIETNAMESE (unless the user explicitly asks for another language).
+
+Example:
+<think>
+User is asking for... I should explain...
+</think>
+Xin chào, đây là câu trả lời của tôi...
+`;
+  } else {
+    // Fast mode instruction (Nhanh) - Direct answer
+    systemInstructionText += `
+Provide your response in VIETNAMESE (unless the user explicitly asks for another language).
+`;
+  }
+
+  if (isTutorMode) {
+      systemInstructionText += `
+ADDITIONAL ROLE: Bạn là một giáo viên tận tâm theo phương pháp Socratic. 
+QUY TẮC CỐT LÕI:
+1. KHÔNG BAO GIỜ đưa ra câu trả lời trực tiếp ngay lập tức, trừ khi học sinh đã hoàn toàn bí.
+2. Hãy đặt câu hỏi gợi mở để hướng dẫn học sinh.
+3. Chia nhỏ vấn đề phức tạp.
+4. Luôn kiểm tra sự hiểu biết.
+5. Nếu là câu hỏi kiến thức chung, hãy giải thích ngắn gọn.
+`;
+  }
+  
+  config.systemInstruction = systemInstructionText;
+
+  // Tools (Search)
+  if (userEnabledSearch) {
+     config.tools = [{ googleSearch: {} }];
+  }
+
+  // Format History for Chat
+  // Note: Gemini SDK Chat expects Content objects.
+  const historyContents = history
+    .filter(msg => !msg.isStreaming && msg.content)
+    .map(msg => {
+        const parts: any[] = [];
+        if (msg.image) {
+            const imgData = getBase64Parts(msg.image);
+            if (imgData) {
+                parts.push({ inlineData: imgData });
+            }
+        }
+        parts.push({ text: msg.content });
+        return {
+            role: msg.role === Role.MODEL ? 'model' : 'user',
+            parts: parts
+        };
     });
-  }
 
-  contents.push({
-    role: Role.USER,
-    parts: currentParts
+  // Create Chat Session
+  const chat = ai.chats.create({
+      model: modelId,
+      config: config,
+      history: historyContents
   });
 
-  // Auto-detect if search is needed based on keywords
-  const lowerMsg = newMessage.toLowerCase();
-  const shouldAutoSearch = SEARCH_TRIGGERS.some(keyword => lowerMsg.includes(keyword));
-  const useTools = userEnabledSearch || shouldAutoSearch;
-
-  const tools = useTools ? [{ googleSearch: {} }] : [];
-
-  // Base system instruction
-  let systemInstruction = "You are Oceep, a helpful and modern AI assistant. Answer the user's question comprehensively but concisely. Do not ramble. If the user asks for current information (weather, news, time, etc.), use the search tool naturally to provide accurate data. If using search results, cite sources clearly.";
-
-  // Modify instruction for simple date/time queries to avoid clutter
-  const isDateQuery = [
-    'ngày', 'giờ', 'tháng', 'năm', 'hôm nay',
-    'ngay', 'gio', 'thang', 'nam', 'hom nay'
-  ].some(k => lowerMsg.includes(k));
-
-  if (isDateQuery) {
-    systemInstruction += " For queries about the current date, time, or calendar, provide the answer directly and hide the source citations in the text.";
+  // Prepare current message
+  const currentMessageParts: any[] = [];
+  if (imageBase64) {
+      const imgData = getBase64Parts(imageBase64);
+      if (imgData) {
+          currentMessageParts.push({ inlineData: imgData });
+      }
   }
+  currentMessageParts.push({ text: newMessage });
 
-  return await ai.models.generateContentStream({
-    model: modelId,
-    contents: contents,
-    config: {
-      tools: tools,
-      systemInstruction: systemInstruction,
-    },
-  });
+  try {
+      // FIX: sendMessageStream expects an object with 'message' property
+      const result = await chat.sendMessageStream({ message: currentMessageParts });
+      
+      for await (const chunk of result) {
+          // Chunk is GenerateContentResponse
+          // We need to yield the text and potentially grounding metadata
+          const text = chunk.text;
+          if (text) yield text;
+
+          // Check for grounding metadata in the chunk to pass back?
+          // The current app architecture expects string chunks mostly.
+          // However, we might need to handle metadata. 
+          // For now, let's just yield text. 
+          // If we want to return the full object for metadata processing in App.tsx:
+          if (chunk.candidates?.[0]?.groundingMetadata) {
+             yield chunk.candidates[0].groundingMetadata;
+          }
+      }
+  } catch (error: any) {
+      console.error("Gemini API Error:", error);
+      throw new Error(error.message || "Lỗi kết nối Gemini API");
+  }
 };

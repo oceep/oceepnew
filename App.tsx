@@ -1,103 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import { v4 as uuidv4 } from 'uuid';
-import { GroundingMetadata } from '@google/genai';
-import { streamGeminiResponse, ChatMessage, ChatSession, Role } from './services/geminiService';
-
-// --- Embedded Components ---
-
-interface MessageBubbleProps {
-  message: ChatMessage;
-  theme: 'dark' | 'light' | 'ocean';
-}
-
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, theme }) => {
-  const isUser = message.role === Role.USER;
-  const sources = message.groundingMetadata?.groundingChunks?.filter(c => c.web?.uri && c.web?.title) || [];
-  
-  const textColorClass = isUser 
-    ? 'text-white' 
-    : theme === 'light' 
-      ? 'text-gray-900' 
-      : 'text-gray-100';
-
-  return (
-    <div className={`w-full mb-6 flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div 
-        className={`relative rounded-3xl px-5 py-3 flex flex-col gap-2 animate-pop-in ${
-          isUser 
-            ? 'bg-blue-600 shadow-md origin-bottom-right ml-auto w-fit max-w-[85%]' 
-            : 'bg-transparent origin-bottom-left w-full max-w-[90%] lg:max-w-[80%]' 
-        }`}
-      >
-        {/* Image Attachment (User) */}
-        {message.image && (
-          <div className="mb-2">
-            <img src={message.image} alt="User upload" className="max-w-full h-auto max-h-64 rounded-lg border border-white/20" />
-          </div>
-        )}
-
-        {/* Content */}
-        <div className={`markdown-body ${textColorClass} ${message.isStreaming ? 'cursor-blink' : ''}`}>
-            {message.content === '' && message.isStreaming ? (
-               <span className="opacity-0">|</span> 
-            ) : (
-              <ReactMarkdown 
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex]}
-                components={{
-                  code({node, inline, className, children, ...props}: any) {
-                    return !inline ? (
-                      <div className="my-4 rounded-lg overflow-hidden bg-[#1e1e1e] border border-gray-700 shadow-xl w-full text-white">
-                         <div className="flex items-center justify-between px-4 py-2 bg-[#2d2d2d] border-b border-gray-700">
-                             <span className="text-xs text-gray-400 font-mono font-bold uppercase">Code</span>
-                         </div>
-                         <div className="p-4 overflow-x-auto bg-[#1e1e1e]">
-                             <code className="font-mono text-sm text-green-400 whitespace-pre" {...props}>{children}</code>
-                         </div>
-                      </div>
-                    ) : (
-                      <code className={`font-mono rounded px-1 py-0.5 ${isUser ? 'bg-white/20' : (theme === 'light' ? 'bg-gray-200 text-red-600' : 'bg-gray-700/50')}`} {...props}>{children}</code>
-                    )
-                  },
-                  p: ({node, ...props}) => <p className={textColorClass} {...props} />,
-                  li: ({node, ...props}) => <li className={textColorClass} {...props} />,
-                  h1: ({node, ...props}) => <h1 className={`font-bold text-2xl mb-2 ${textColorClass}`} {...props} />,
-                  h2: ({node, ...props}) => <h2 className={`font-bold text-xl mb-2 ${textColorClass}`} {...props} />,
-                  strong: ({node, ...props}) => <strong className="font-bold text-blue-400" {...props} />
-                }}
-              >
-                {message.content}
-              </ReactMarkdown>
-            )}
-        </div>
-
-        {/* Sources */}
-        {sources.length > 0 && (
-          <div className={`mt-2 pt-2 border-t flex flex-wrap gap-2 ${isUser ? 'border-white/20' : (theme === 'light' ? 'border-gray-300' : 'border-white/10')}`}>
-            {sources.map((chunk, idx) => (
-              <a 
-                key={idx} 
-                href={chunk.web?.uri} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="source-pill"
-                title={chunk.web?.title}
-              >
-                 {chunk.web?.title}
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// --- Main App ---
+import { streamGeminiResponse, generateImageWithPuter, ModelMode } from './services/geminiService';
+import { ChatMessage, ChatSession, Role } from './types';
+import { Sidebar } from './components/Sidebar';
+import { MessageBubble } from './components/MessageBubble';
 
 type Theme = 'dark' | 'light' | 'ocean';
 
@@ -106,6 +12,11 @@ const App: React.FC = () => {
   const [input, setInput] = useState('');
   const [theme, setTheme] = useState<Theme>('dark');
   const [isSearchEnabled, setIsSearchEnabled] = useState(false);
+  const [isTutorMode, setIsTutorMode] = useState(false);
+  const [modelMode, setModelMode] = useState<ModelMode>('fast');
+  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [showSearchSelector, setShowSearchSelector] = useState(false);
+  
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -115,6 +26,9 @@ const App: React.FC = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const modelSelectorRef = useRef<HTMLDivElement>(null);
+  const searchSelectorRef = useRef<HTMLDivElement>(null);
+  const stopGenerationRef = useRef<boolean>(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as Theme;
@@ -122,13 +36,28 @@ const App: React.FC = () => {
 
     const savedSessions = localStorage.getItem('oceep_sessions');
     if (savedSessions) {
-      const parsed = JSON.parse(savedSessions);
-      setSessions(parsed);
-      if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
-      else createNewSession();
+      try {
+        const parsed = JSON.parse(savedSessions);
+        setSessions(parsed);
+        if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
+        else createNewSession();
+      } catch (e) {
+        createNewSession();
+      }
     } else {
       createNewSession();
     }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modelSelectorRef.current && !modelSelectorRef.current.contains(event.target as Node)) {
+        setShowModelSelector(false);
+      }
+      if (searchSelectorRef.current && !searchSelectorRef.current.contains(event.target as Node)) {
+        setShowSearchSelector(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   useEffect(() => {
@@ -157,12 +86,35 @@ const App: React.FC = () => {
     setIsSidebarOpen(false);
   };
 
+  const handleDeleteSession = (sessionId: string) => {
+    const newSessions = sessions.filter(s => s.id !== sessionId);
+    if (newSessions.length === 0) {
+        const newSession: ChatSession = {
+            id: uuidv4(),
+            title: 'Cuộc trò chuyện mới',
+            messages: [],
+            createdAt: Date.now()
+        };
+        setSessions([newSession]);
+        setCurrentSessionId(newSession.id);
+    } else {
+        setSessions(newSessions);
+        if (currentSessionId === sessionId) {
+            setCurrentSessionId(newSessions[0].id);
+        }
+    }
+  };
+
+  const handleRenameSession = (sessionId: string, newTitle: string) => {
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: newTitle } : s));
+  };
+
   const updateCurrentSessionMessages = (updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
     setSessions(prev => prev.map(s => {
       if (s.id === currentSessionId) {
         let newTitle = s.title;
         const newMessages = updater(s.messages);
-        if (s.messages.length === 0 && newMessages.length > 0 && newMessages[0].role === Role.USER) {
+        if (s.title === 'Cuộc trò chuyện mới' && s.messages.length === 0 && newMessages.length > 0 && newMessages[0].role === Role.USER) {
           const textContent = newMessages[0].content || (newMessages[0].image ? '[Hình ảnh]' : 'Chat mới');
           newTitle = textContent.slice(0, 30) + (textContent.length > 30 ? '...' : '');
         }
@@ -172,11 +124,34 @@ const App: React.FC = () => {
     }));
   };
 
-  const handleSend = async (manualInput?: string) => {
+  const handleStopGeneration = () => {
+      stopGenerationRef.current = true;
+  };
+
+  const handleRegenerate = async (messageIndex: number) => {
+    if (isStreaming || !currentSessionId) return;
+    
+    const currentMsgs = getCurrentSession()?.messages || [];
+    if (messageIndex <= 0 || messageIndex >= currentMsgs.length) return;
+
+    const userPromptMsg = currentMsgs[messageIndex - 1];
+    if (userPromptMsg.role !== Role.USER) return; 
+
+    updateCurrentSessionMessages(msgs => msgs.slice(0, messageIndex));
+    updateCurrentSessionMessages(msgs => msgs.slice(0, messageIndex - 1));
+    
+    setInput(userPromptMsg.content);
+    if (userPromptMsg.image) setStagedImage(userPromptMsg.image);
+    
+    setTimeout(() => handleSend(userPromptMsg.content), 0);
+  };
+
+  const handleSend = async (manualInput?: string, isImageGenRequest: boolean = false) => {
     const textToSend = manualInput !== undefined ? manualInput : input;
     
-    // Prevent sending if empty (and no image) or streaming
     if ((!textToSend.trim() && !stagedImage) || isStreaming || !currentSessionId) return;
+
+    stopGenerationRef.current = false;
 
     const userMsg: ChatMessage = {
       id: uuidv4(),
@@ -193,7 +168,6 @@ const App: React.FC = () => {
       isStreaming: true
     };
 
-    // Reset inputs
     setInput('');
     setStagedImage(null);
     if (textareaRef.current) {
@@ -204,38 +178,53 @@ const App: React.FC = () => {
     setIsStreaming(true);
 
     try {
-      const currentHistory = sessions.find(s => s.id === currentSessionId)?.messages || [];
-      const streamResult = await streamGeminiResponse(currentHistory, userMsg.content, isSearchEnabled, userMsg.image);
+      if (isImageGenRequest) {
+          const imageUrl = await generateImageWithPuter(userMsg.content);
+          updateCurrentSessionMessages(prev => prev.map(msg => 
+            msg.id === aiMsgId 
+              ? { ...msg, content: `Đã tạo ảnh theo yêu cầu: "${userMsg.content}"`, image: imageUrl, isStreaming: false } 
+              : msg
+          ));
+      } else {
+          const currentHistory = sessions.find(s => s.id === currentSessionId)?.messages || [];
+          const result = await streamGeminiResponse(
+              currentHistory, 
+              userMsg.content, 
+              isSearchEnabled, 
+              userMsg.image, 
+              isTutorMode,
+              modelMode
+          );
 
-      let fullText = '';
-      let groundingMeta: GroundingMetadata | undefined;
+          let fullText = '';
+          let groundingMetadata: any = null;
+          
+          if (result && typeof result[Symbol.asyncIterator] === 'function') {
+            for await (const chunk of result) {
+              if (stopGenerationRef.current) break;
 
-      for await (const chunk of streamResult) {
-        const textChunk = chunk.text || '';
-        fullText += textChunk;
-        if (chunk.candidates?.[0]?.groundingMetadata) {
-          groundingMeta = chunk.candidates[0].groundingMetadata;
-        }
-        updateCurrentSessionMessages(prev => prev.map(msg => 
-          msg.id === aiMsgId 
-            ? { ...msg, content: fullText, groundingMetadata: groundingMeta } 
-            : msg
-        ));
+              // Check if chunk is grounding metadata object
+              if (typeof chunk === 'object' && chunk.groundingChunks) {
+                  groundingMetadata = chunk;
+                  updateCurrentSessionMessages(prev => prev.map(msg => 
+                      msg.id === aiMsgId ? { ...msg, groundingMetadata: groundingMetadata } : msg
+                  ));
+                  continue;
+              }
+
+              if (typeof chunk === 'string') {
+                fullText += chunk;
+                updateCurrentSessionMessages(prev => prev.map(msg => 
+                  msg.id === aiMsgId ? { ...msg, content: fullText } : msg
+                ));
+              }
+            }
+          }
       }
     } catch (error: any) {
-      console.error("Gemini Error:", error);
-      let errorMessage = "Đã có lỗi xảy ra. Vui lòng thử lại.";
-      
-      // Provide more specific error if available
-      if (error.message && (error.message.includes("API Key") || error.message.includes("API_KEY"))) {
-        errorMessage = "⚠️ Lỗi: Chưa cấu hình API Key trong file .env hoặc Vercel.";
-      } else if (error.message) {
-         // Optionally show the technical error for debugging
-         errorMessage = `Lỗi: ${error.message}`;
-      }
-
+      console.error("Error:", error);
       updateCurrentSessionMessages(prev => prev.map(msg => 
-        msg.id === aiMsgId ? { ...msg, content: errorMessage } : msg
+        msg.id === aiMsgId ? { ...msg, content: `Lỗi: ${error.message || 'Không xác định'}` } : msg
       ));
     } finally {
       setIsStreaming(false);
@@ -254,7 +243,6 @@ const App: React.FC = () => {
       "Giải thích thuyết tương đối rộng cho trẻ em"
     ];
     const random = prompts[Math.floor(Math.random() * prompts.length)];
-    // Automatically send
     handleSend(random);
   };
 
@@ -273,13 +261,9 @@ const App: React.FC = () => {
 
   const getThemeClasses = () => {
     switch (theme) {
-      case 'light':
-        return 'bg-white text-gray-900';
-      case 'ocean':
-        return 'bg-cover bg-center text-white';
-      case 'dark':
-      default:
-        return 'bg-gradient-to-br from-[#212935] to-black text-gray-100';
+      case 'light': return 'bg-white text-gray-900';
+      case 'ocean': return 'bg-cover bg-center text-white';
+      case 'dark': default: return 'bg-gradient-to-br from-[#212935] to-black text-gray-100';
     }
   };
 
@@ -289,72 +273,55 @@ const App: React.FC = () => {
          input: 'text-gray-900 placeholder-gray-500',
          icon: 'text-gray-600 hover:bg-gray-200',
          bg: 'bg-white/80 border-gray-300',
-         searchActive: 'bg-blue-600 text-white',
+         active: 'bg-blue-600 text-white',
+         tutorActive: 'bg-purple-600 text-white',
+         searchActive: 'bg-emerald-600 text-white',
+         popup: 'bg-white border-gray-200 text-gray-800 shadow-xl'
        };
     }
     return {
        input: 'text-gray-200 placeholder-gray-400',
        icon: 'text-gray-300 hover:bg-white/10',
        bg: 'bg-black/30 border-white/20',
-       searchActive: 'bg-blue-600 text-white',
+       active: 'bg-blue-600 text-white',
+       tutorActive: 'bg-purple-600 text-white',
+       searchActive: 'bg-emerald-600 text-white',
+       popup: 'bg-[#1e1e24] border-gray-700 text-white shadow-2xl'
     };
   };
   
   const footerColors = getFooterColors();
-
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 11) return 'Chào buổi sáng';
-    if (hour < 14) return 'Chào buổi trưa';
-    if (hour < 18) return 'Chào buổi chiều';
-    return 'Chào buổi tối';
-  };
-
   const currentMessages = getCurrentSession()?.messages || [];
+
+  // Model Display Info
+  const getModelInfo = () => {
+      switch(modelMode) {
+          case 'smart': return { name: 'Thông minh', icon: (
+             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+          )};
+          case 'fast': default: return { name: 'Nhanh', icon: (
+             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          )};
+      }
+  }
+
+  const currentModel = getModelInfo();
 
   return (
     <div className={`relative flex h-screen w-screen overflow-hidden transition-colors duration-500 ${getThemeClasses()}`} style={theme === 'ocean' ? { backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1173&auto=format&fit=crop')" } : {}}>
       {theme === 'ocean' && <div className="absolute inset-0 bg-black/40 pointer-events-none" />}
 
-      {/* Sidebar (Inline implementation) */}
-      <div className={`fixed inset-y-0 left-0 z-40 w-72 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:translate-x-0 bg-gray-950 border-r border-white/10 flex flex-col shadow-2xl h-full`}>
-        <div className="p-4 flex flex-col gap-4">
-           {/* Sidebar Header with Close Button for Mobile */}
-           <div className="flex justify-between items-center lg:hidden">
-              <h2 className="font-bold text-lg text-white">Menu</h2>
-              <button onClick={() => setIsSidebarOpen(false)} className="text-gray-400 hover:text-white">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-           </div>
-           
-           {/* Big New Chat Button */}
-           <button 
-             onClick={() => { createNewSession(); setIsSidebarOpen(false); }}
-             className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-full font-semibold transition-transform active:scale-95 shadow-lg shadow-blue-900/20"
-           >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-              Trò chuyện mới
-           </button>
-           
-           <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mt-2">Lịch sử</div>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
-           {sessions.map(session => (
-             <button 
-                key={session.id}
-                onClick={() => { setCurrentSessionId(session.id); setIsSidebarOpen(false); }}
-                className={`w-full text-left p-3 rounded-xl text-sm truncate transition-colors ${
-                  currentSessionId === session.id 
-                    ? 'bg-white/10 text-white' 
-                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                }`}
-             >
-                {session.title}
-             </button>
-           ))}
-        </div>
-      </div>
+      {/* Sidebar Component */}
+      <Sidebar 
+        isOpen={isSidebarOpen}
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onSelectSession={setCurrentSessionId}
+        onNewChat={createNewSession}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
+        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col relative z-10 h-full w-full">
@@ -376,8 +343,12 @@ const App: React.FC = () => {
                 </div>
 
                 <div className={`flex items-center gap-1 p-1 rounded-full backdrop-blur ${theme === 'light' ? 'bg-gray-200/50' : 'bg-white/5'}`}>
-                     <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`w-10 h-10 flex items-center justify-center rounded-full lg:hidden active:scale-90 transition-transform ${theme === 'light' ? 'text-gray-700 hover:bg-white' : 'text-white hover:bg-white/10'}`}>
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                     <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`w-10 h-10 flex items-center justify-center rounded-full md:hidden active:scale-90 transition-transform ${theme === 'light' ? 'text-gray-700 hover:bg-white' : 'text-white hover:bg-white/10'}`}>
+                        {isSidebarOpen ? (
+                           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        ) : (
+                           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        )}
                      </button>
                      <button onClick={createNewSession} className={`w-10 h-10 flex items-center justify-center rounded-full active:scale-90 transition-transform ${theme === 'light' ? 'text-gray-700 hover:bg-white' : 'text-white hover:bg-white/10'}`} title="Chat Mới">
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
@@ -397,11 +368,20 @@ const App: React.FC = () => {
         <main className="flex-1 flex flex-col p-4 overflow-hidden">
              {currentMessages.length === 0 ? (
                 <div className="flex-grow flex flex-col items-center justify-center text-center animate-fade-up">
-                     <h1 className={`text-5xl font-bold mb-4 opacity-90 ${theme === 'light' ? 'text-gray-800' : 'text-white'}`}>{getGreeting()}</h1>
+                     <h1 className={`text-5xl font-bold mb-4 opacity-90 ${theme === 'light' ? 'text-gray-800' : 'text-white'}`}>
+                        {new Date().getHours() < 12 ? 'Chào buổi sáng' : new Date().getHours() < 18 ? 'Chào buổi chiều' : 'Chào buổi tối'}
+                     </h1>
                 </div>
              ) : (
                 <div key={currentSessionId} className="w-full max-w-3xl mx-auto flex-grow mb-4 overflow-y-auto px-2 animate-fade-up">
-                   {currentMessages.map(msg => <MessageBubble key={msg.id} message={msg} theme={theme} />)}
+                   {currentMessages.map((msg, idx) => (
+                      <MessageBubble 
+                          key={msg.id} 
+                          message={msg} 
+                          theme={theme} 
+                          onRegenerate={msg.role === Role.MODEL && !msg.isStreaming ? () => handleRegenerate(idx) : undefined}
+                      />
+                   ))}
                    <div ref={bottomRef}></div>
                 </div>
              )}
@@ -425,6 +405,7 @@ const App: React.FC = () => {
                 )}
 
                 <div className="flex items-end w-full">
+                    
                     {/* Auto-growing Textarea */}
                     <textarea 
                        ref={textareaRef}
@@ -440,34 +421,112 @@ const App: React.FC = () => {
                            handleSend();
                          }
                        }}
-                       placeholder="Bạn muốn biết gì?" 
+                       placeholder={isTutorMode ? "Hỏi thầy giáo..." : "Bạn muốn biết gì?"} 
                        rows={1}
-                       className={`flex-grow bg-transparent border-none focus:ring-0 focus:outline-none text-lg pl-5 py-3 resize-none max-h-[150px] ${footerColors.input}`}
+                       disabled={isStreaming}
+                       className={`flex-grow bg-transparent border-none focus:ring-0 focus:outline-none text-lg pl-5 py-3 resize-none max-h-[150px] ${footerColors.input} disabled:opacity-50`}
                     />
                     
                     <div className="flex items-center shrink-0 pr-1 pb-1.5 gap-1">
-                         {/* Random Prompt */}
-                         <div className="relative group hidden sm:block">
-                            <button onClick={handleRandomPrompt} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon}`}>
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" /></svg>
+                         {/* Model Selector Toggle */}
+                         <div className="relative group" ref={modelSelectorRef}>
+                            <button 
+                                onClick={() => setShowModelSelector(!showModelSelector)} 
+                                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full transition-colors active:scale-95 transform ${showModelSelector ? footerColors.active : footerColors.icon}`}
+                            >
+                                {currentModel.icon}
+                                <span className="text-sm font-semibold max-w-[100px] truncate hidden sm:block">{currentModel.name}</span>
                             </button>
-                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none">Ngẫu nhiên</span>
+                            
+                            {/* Model Selector Popup */}
+                            {showModelSelector && (
+                                <div className={`absolute bottom-full left-0 mb-3 w-64 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
+                                    <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase tracking-wider">Chọn chế độ</div>
+                                    
+                                    <button onClick={() => {setModelMode('fast'); setShowModelSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'fast' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
+                                        <div className={`p-1.5 rounded-full ${modelMode === 'fast' ? 'bg-blue-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className={`font-semibold text-sm ${modelMode === 'fast' ? 'text-blue-500' : ''}`}>Nhanh</div>
+                                            <div className="text-xs opacity-70">Trả lời nhanh</div>
+                                        </div>
+                                        {modelMode === 'fast' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
+                                    </button>
+
+                                    <button onClick={() => {setModelMode('smart'); setShowModelSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'smart' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
+                                        <div className={`p-1.5 rounded-full ${modelMode === 'smart' ? 'bg-blue-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className={`font-semibold text-sm ${modelMode === 'smart' ? 'text-blue-500' : ''}`}>Thông minh</div>
+                                            <div className="text-xs opacity-70">Suy nghĩ kỹ</div>
+                                        </div>
+                                        {modelMode === 'smart' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
+                                    </button>
+                                </div>
+                            )}
                          </div>
 
-                         {/* Search Toggle */}
+                         {/* Search Selector */}
+                         <div className="relative group" ref={searchSelectorRef}>
+                            <button 
+                                onClick={() => setShowSearchSelector(!showSearchSelector)} 
+                                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-full transition-colors active:scale-95 transform ${isSearchEnabled ? footerColors.searchActive : footerColors.icon}`}
+                            >
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                {isSearchEnabled && <span className="text-sm font-semibold max-w-[80px] truncate hidden sm:block">Tìm kiếm</span>}
+                            </button>
+                            
+                            {/* Search Selector Popup */}
+                            {showSearchSelector && (
+                                <div className={`absolute bottom-full left-0 mb-3 w-64 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
+                                    <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase tracking-wider">Tìm kiếm</div>
+
+                                    {/* Disable Option */}
+                                    <button onClick={() => {setIsSearchEnabled(false); setShowSearchSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${!isSearchEnabled ? 'bg-gray-500/10' : 'hover:bg-gray-500/10'}`}>
+                                        <div className={`p-1.5 rounded-full ${!isSearchEnabled ? 'bg-gray-500 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="font-semibold text-sm">Tắt tìm kiếm</div>
+                                            <div className="text-xs opacity-70">Chỉ dùng mô hình</div>
+                                        </div>
+                                        {!isSearchEnabled && <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
+                                    </button>
+
+                                    <div className="my-1 border-t border-gray-700/30"></div>
+                                    
+                                    {/* Search (Standard) */}
+                                    <button onClick={() => {setIsSearchEnabled(true); setShowSearchSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${isSearchEnabled ? 'bg-emerald-600/10' : 'hover:bg-gray-500/10'}`}>
+                                        <div className={`p-1.5 rounded-full ${isSearchEnabled ? 'bg-emerald-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className={`font-semibold text-sm ${isSearchEnabled ? 'text-emerald-500' : ''}`}>Tìm kiếm</div>
+                                            <div className="text-xs opacity-70">Gemini 3 Flash</div>
+                                        </div>
+                                        {isSearchEnabled && <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
+                                    </button>
+                                </div>
+                            )}
+                         </div>
+
+                         {/* Image Gen Button */}
                          <div className="relative group">
                              <button 
-                                onClick={() => setIsSearchEnabled(!isSearchEnabled)}
-                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isSearchEnabled ? footerColors.searchActive : footerColors.icon}`}
+                                onClick={() => handleSend(undefined, true)}
+                                disabled={!input.trim() || isStreaming}
+                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50`}
                              >
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="11" cy="11" r="8" strokeWidth="1.5"></circle><path strokeLinecap="round" strokeWidth="1.5" d="m21 21-4.35-4.35"></path></svg>
+                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                              </button>
-                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none">{isSearchEnabled ? "Tắt tìm kiếm" : "Bật tìm kiếm"}</span>
+                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">Tạo ảnh với Dream</span>
                          </div>
                          
                          {/* Upload */}
                          <div className="relative group">
-                            <button onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon}`}>
+                            <button disabled={isStreaming} onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50`}>
                                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                             </button>
                             <input 
@@ -480,8 +539,24 @@ const App: React.FC = () => {
                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none">Tải ảnh</span>
                          </div>
 
-                         {/* Send Button */}
-                         {input.trim() || stagedImage ? (
+                         {/* Tutor Mode Toggle */}
+                         <div className="relative group">
+                             <button 
+                                onClick={() => setIsTutorMode(!isTutorMode)}
+                                disabled={isStreaming}
+                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isTutorMode ? footerColors.tutorActive : footerColors.icon} disabled:opacity-50`}
+                             >
+                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" /></svg>
+                             </button>
+                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">{isTutorMode ? "Tắt chế độ Gia Sư" : "Chế độ Gia Sư"}</span>
+                         </div>
+
+                         {/* Send / Stop Button */}
+                         {isStreaming ? (
+                            <button onClick={handleStopGeneration} className="flex items-center justify-center w-11 h-11 bg-white text-black rounded-full transition-colors shrink-0 ml-1 shadow-lg active:scale-90 transform animate-pulse">
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                             </button>
+                         ) : (input.trim() || stagedImage) ? (
                              <button onClick={() => handleSend()} className="flex items-center justify-center w-11 h-11 bg-blue-600 hover:bg-blue-500 text-white rounded-full transition-colors shrink-0 ml-1 shadow-lg active:scale-90 transform">
                                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
                              </button>

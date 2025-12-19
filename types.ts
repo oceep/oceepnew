@@ -1,4 +1,12 @@
-import { GroundingMetadata } from "@google/genai";
+
+export interface GroundingMetadata {
+  groundingChunks?: Array<{
+    web?: {
+      uri?: string;
+      title?: string;
+    };
+  }>;
+}
 
 export enum Role {
   USER = 'user',

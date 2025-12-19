@@ -1,3 +1,21 @@
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-markdown": "https://esm.sh/react-markdown@^10.1.0",
+    "vite": "https://esm.sh/vite@^7.3.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "uuid": "https://esm.sh/uuid@^13.0.0",
+    "remark-gfm": "https://esm.sh/remark-gfm@^4.0.1",
+    "remark-math": "https://esm.sh/remark-math@^6.0.0",
+    "rehype-katex": "https://esm.sh/rehype-katex@^7.0.1",
+    "vite-plugin-pwa": "https://esm.sh/vite-plugin-pwa@^1.2.0",
+    "@google/genai": "https://esm.sh/@google/genai"
+  }
+}
+</script>
 <!DOCTYPE html>
 <html lang="en" class="h-full">
   <head>
@@ -83,58 +101,42 @@
       .source-pill {
         display: inline-flex;
         align-items: center;
-        background-color: rgba(47, 51, 54, 0.8);
-        color: #e0e0e0 !important;
+        background-color: rgba(47, 51, 54, 0.5);
+        color: #e2e8f0;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
         text-decoration: none;
-        font-size: 0.7rem;
-        font-weight: 600;
-        padding: 2px 10px;
-        border-radius: 99px;
-        margin: 0 4px 4px 0;
-        border: 1px solid #444;
-        transition: all 0.2s ease;
+        transition: all 0.2s;
+        border: 1px solid rgba(255,255,255,0.1);
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .source-pill:hover {
-        background-color: #1d9bf0;
-        border-color: #1d9bf0;
-        color: white !important;
+        background-color: rgba(71, 75, 80, 0.7);
+        border-color: rgba(255,255,255,0.3);
+        color: white;
       }
 
-      /* Cursor Blink */
-      .cursor-blink::after {
+      .cursor-blink:after {
         content: '▋';
         display: inline-block;
         margin-left: 2px;
         animation: blink 1s step-start infinite;
-        vertical-align: baseline;
+        color: #60a5fa;
         font-size: 0.9em;
-        line-height: 1;
       }
+
       @keyframes blink {
         50% { opacity: 0; }
       }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "vite": "https://esm.sh/vite@^7.3.0",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react-markdown": "https://esm.sh/react-markdown@^10.1.0",
-    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
-    "remark-gfm": "https://esm.sh/remark-gfm@^4.0.1",
-    "uuid": "https://esm.sh/uuid@^13.0.0",
-    "remark-math": "https://esm.sh/remark-math@^6.0.0",
-    "rehype-katex": "https://esm.sh/rehype-katex@^7.0.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "vite-plugin-pwa": "https://esm.sh/vite-plugin-pwa@^1.2.0"
-  }
-}
-</script>
-</head>
-  <body class="h-full overflow-hidden transition-colors duration-500 bg-[#0f0f12]">
-    <div id="root" class="h-full"></div>
+  </head>
+  <body class="bg-gray-950 text-gray-100 selection:bg-blue-500/30">
+    <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
