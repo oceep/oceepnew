@@ -29,15 +29,15 @@ export const generateImageWithPuter = async (_prompt: string): Promise<string> =
     throw new Error("Tính năng tạo ảnh chưa được hỗ trợ trên backend hiện tại.");
 };
 
-// --- Chat Completion (SerpAPI google_ai_mode) ---
+// --- Chat Completion (SerpAPI) ---
 
 export const streamGeminiResponse = async function* (
-  _history: ChatMessage[], // Search engines are generally stateless per query
+  _history: ChatMessage[],
   newMessage: string,
   _userEnabledSearch: boolean,
   _imageBase64?: string,
   _isTutorMode: boolean = false,
-  _modelMode: ModelMode = 'fast'
+  modelMode: ModelMode = 'fast'
 ): AsyncGenerator<string | any, void, unknown> {
   
   if (!SERPAPI_API_KEY) {
@@ -45,19 +45,19 @@ export const streamGeminiResponse = async function* (
   }
 
   try {
-      // Build the URL with query parameters
-      // Note: We use a proxy logic or direct fetch. 
-      // Direct fetch to serpapi.com from browser might require a proxy server 
-      // due to CORS if not explicitly allowed by their dashboard for this domain.
-      // Assuming it works or is proxied:
-      
       const url = new URL(BASE_URL);
-      url.searchParams.append("engine", "google_ai_mode");
       url.searchParams.append("q", newMessage);
       url.searchParams.append("api_key", SERPAPI_API_KEY);
-      // Optional: Add location or language if needed, e.g., hl=vi, gl=vn
       url.searchParams.append("hl", "vi"); 
       url.searchParams.append("gl", "vn");
+
+      // Logic: Smart = google_ai_mode, Fast = google (standard)
+      if (modelMode === 'smart') {
+          url.searchParams.append("engine", "google_ai_mode");
+      } else {
+          url.searchParams.append("engine", "google");
+          url.searchParams.append("num", "7"); // Get a few more results for Fast mode
+      }
 
       const response = await fetch(url.toString());
 
@@ -72,36 +72,67 @@ export const streamGeminiResponse = async function* (
           throw new Error(json.error);
       }
 
-      // Logic to extract text from google_ai_mode response.
-      // The user specified json["text_blocks"].
-      // We also look for related generative AI structures just in case.
-      
-      const textBlocks = json.text_blocks || json.ai_overview?.text_blocks;
+      if (modelMode === 'smart') {
+          // --- SMART MODE: Process AI Overview ---
+          const textBlocks = json.text_blocks || json.ai_overview?.text_blocks;
+          
+          let hasAiContent = false;
+          if (textBlocks && Array.isArray(textBlocks)) {
+              for (const block of textBlocks) {
+                  let text = "";
+                  if (typeof block === 'string') {
+                      text = block;
+                  } else if (typeof block === 'object' && block !== null) {
+                      text = block.value || block.text || block.snippet || "";
+                  }
 
-      if (textBlocks && Array.isArray(textBlocks)) {
-          for (const block of textBlocks) {
-              // block might be a simple string or an object { type: '...', value: '...' }
-              let text = "";
-              if (typeof block === 'string') {
-                  text = block;
-              } else if (typeof block === 'object' && block !== null) {
-                  // Common SerpAPI patterns
-                  text = block.value || block.text || block.snippet || "";
-              }
-
-              if (text) {
-                  yield text + "\n\n";
+                  if (text) {
+                      yield text + "\n\n";
+                      hasAiContent = true;
+                  }
               }
           }
-      } else if (json.organic_results && json.organic_results.length > 0) {
-           // Fallback: If AI mode didn't return a direct answer, summarize top organic results
-           yield "Không có câu trả lời AI trực tiếp. Dưới đây là kết quả tìm kiếm:\n\n";
-           for (let i = 0; i < Math.min(3, json.organic_results.length); i++) {
-               const result = json.organic_results[i];
-               yield `**${result.title}**\n${result.snippet}\n[Xem thêm](${result.link})\n\n`;
-           }
+          
+          if (!hasAiContent) {
+              // Fallback to organic if AI didn't answer
+              if (json.organic_results && json.organic_results.length > 0) {
+                   yield "Google AI chưa có câu trả lời cho vấn đề này. Dưới đây là các kết quả tìm kiếm liên quan:\n\n";
+                   for (let i = 0; i < Math.min(4, json.organic_results.length); i++) {
+                       const result = json.organic_results[i];
+                       yield `**[${result.title}](${result.link})**\n${result.snippet}\n\n`;
+                   }
+              } else {
+                   yield "Không tìm thấy kết quả phù hợp.";
+              }
+          }
+
       } else {
-           yield "Không tìm thấy kết quả phù hợp.";
+          // --- FAST MODE: Process Standard Organic Results ---
+          // Just list the results nicely
+          if (json.organic_results && json.organic_results.length > 0) {
+              yield "Dưới đây là kết quả tìm kiếm nhanh từ Google:\n\n";
+              
+              // Feature Snippet (if any)
+              if (json.answer_box) {
+                   const answer = json.answer_box.answer || json.answer_box.snippet;
+                   if (answer) {
+                       yield `> **Thông tin nổi bật:**\n> ${answer}\n\n`;
+                   }
+              }
+
+              for (const result of json.organic_results) {
+                  yield `### [${result.title}](${result.link})\n`;
+                  if (result.snippet) {
+                      yield `${result.snippet}\n\n`;
+                  }
+                  // Rich Snippet handling (optional)
+                  if (result.rich_snippet?.top?.extensions) {
+                      yield `*${result.rich_snippet.top.extensions.join(', ')}*\n\n`;
+                  }
+              }
+          } else {
+              yield "Không tìm thấy kết quả nào trên Google.";
+          }
       }
 
   } catch (error: any) {
