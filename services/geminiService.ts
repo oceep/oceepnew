@@ -65,7 +65,12 @@ export const streamGeminiResponse = async function* (
   const config: any = {};
   
   // System Instruction
-  let systemInstructionText = `You are Oceep AI.`;
+  let systemInstructionText = `Your name is Oceep.
+RULES:
+1. Only mention your name "Oceep" if the user explicitly asks for your name or in a greeting.
+2. Do NOT refer to yourself as "Oceep AI".
+3. Do NOT start every response with your name. Keep the conversation natural and concise.
+`;
 
   // Only apply Thinking Process for Smart mode (Tu Duy)
   if (modelMode === 'smart') {
