@@ -1,7 +1,7 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { ChatMessage, Role } from '../types';
 
-const API_KEY = "AIzaSyBodR21AztBA9dW-XqfJy22FKiwOWPXOfU";
+const API_KEY = process.env.API_KEY || "";
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export type ModelMode = 'fast' | 'smart';

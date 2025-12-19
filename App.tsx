@@ -15,7 +15,6 @@ const App: React.FC = () => {
   const [isTutorMode, setIsTutorMode] = useState(false);
   const [modelMode, setModelMode] = useState<ModelMode>('fast');
   const [showModelSelector, setShowModelSelector] = useState(false);
-  const [showSearchSelector, setShowSearchSelector] = useState(false);
   
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -27,7 +26,6 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
-  const searchSelectorRef = useRef<HTMLDivElement>(null);
   const stopGenerationRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -51,9 +49,6 @@ const App: React.FC = () => {
     const handleClickOutside = (event: MouseEvent) => {
       if (modelSelectorRef.current && !modelSelectorRef.current.contains(event.target as Node)) {
         setShowModelSelector(false);
-      }
-      if (searchSelectorRef.current && !searchSelectorRef.current.contains(event.target as Node)) {
-        setShowSearchSelector(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -440,7 +435,7 @@ const App: React.FC = () => {
                             
                             {/* Model Selector Popup */}
                             {showModelSelector && (
-                                <div className={`absolute bottom-full left-0 mb-3 w-64 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
+                                <div className={`absolute bottom-full left-0 mb-3 w-80 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
                                     <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase tracking-wider">Chọn chế độ</div>
                                     
                                     <button onClick={() => {setModelMode('fast'); setShowModelSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'fast' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
@@ -449,7 +444,7 @@ const App: React.FC = () => {
                                         </div>
                                         <div className="flex-1">
                                             <div className={`font-semibold text-sm ${modelMode === 'fast' ? 'text-blue-500' : ''}`}>Nhanh</div>
-                                            <div className="text-xs opacity-70">Trả lời nhanh</div>
+                                            <div className="text-xs opacity-70">Nhanh chóng cho các tác vụ hàng ngày</div>
                                         </div>
                                         {modelMode === 'fast' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
                                     </button>
@@ -460,7 +455,7 @@ const App: React.FC = () => {
                                         </div>
                                         <div className="flex-1">
                                             <div className={`font-semibold text-sm ${modelMode === 'smart' ? 'text-blue-500' : ''}`}>Thông minh</div>
-                                            <div className="text-xs opacity-70">Suy nghĩ kỹ</div>
+                                            <div className="text-xs opacity-70">Suy nghĩ kỹ nhất, đưa ra câu trả lời đầy đủ và chi tiết</div>
                                         </div>
                                         {modelMode === 'smart' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
                                     </button>
@@ -468,48 +463,18 @@ const App: React.FC = () => {
                             )}
                          </div>
 
-                         {/* Search Selector */}
-                         <div className="relative group" ref={searchSelectorRef}>
+                         {/* Search Toggle (Compact) */}
+                         <div className="relative group">
                             <button 
-                                onClick={() => setShowSearchSelector(!showSearchSelector)} 
-                                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-full transition-colors active:scale-95 transform ${isSearchEnabled ? footerColors.searchActive : footerColors.icon}`}
+                                onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+                                disabled={isStreaming}
+                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isSearchEnabled ? footerColors.searchActive : footerColors.icon} disabled:opacity-50`}
                             >
-                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                                {isSearchEnabled && <span className="text-sm font-semibold max-w-[80px] truncate hidden sm:block">Tìm kiếm</span>}
+                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                             </button>
-                            
-                            {/* Search Selector Popup */}
-                            {showSearchSelector && (
-                                <div className={`absolute bottom-full left-0 mb-3 w-64 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
-                                    <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase tracking-wider">Tìm kiếm</div>
-
-                                    {/* Disable Option */}
-                                    <button onClick={() => {setIsSearchEnabled(false); setShowSearchSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${!isSearchEnabled ? 'bg-gray-500/10' : 'hover:bg-gray-500/10'}`}>
-                                        <div className={`p-1.5 rounded-full ${!isSearchEnabled ? 'bg-gray-500 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="font-semibold text-sm">Tắt tìm kiếm</div>
-                                            <div className="text-xs opacity-70">Chỉ dùng mô hình</div>
-                                        </div>
-                                        {!isSearchEnabled && <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
-                                    </button>
-
-                                    <div className="my-1 border-t border-gray-700/30"></div>
-                                    
-                                    {/* Search (Standard) */}
-                                    <button onClick={() => {setIsSearchEnabled(true); setShowSearchSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${isSearchEnabled ? 'bg-emerald-600/10' : 'hover:bg-gray-500/10'}`}>
-                                        <div className={`p-1.5 rounded-full ${isSearchEnabled ? 'bg-emerald-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className={`font-semibold text-sm ${isSearchEnabled ? 'text-emerald-500' : ''}`}>Tìm kiếm</div>
-                                            <div className="text-xs opacity-70">Gemini 3 Flash</div>
-                                        </div>
-                                        {isSearchEnabled && <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
-                                    </button>
-                                </div>
-                            )}
+                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">
+                                {isSearchEnabled ? "Tắt tìm kiếm" : "Tìm kiếm: Tham khảo thông tin từ các nguồn khác"}
+                            </span>
                          </div>
 
                          {/* Image Gen Button */}
