@@ -265,8 +265,16 @@ const App: React.FC = () => {
           return;
       }
       console.error("Error:", error);
+      
+      let displayError = `Lỗi: ${error.message || 'Không xác định'}`;
+      // Heuristic to detect raw JSON errors, specifically 429 Too Many Requests
+      const errStr = String(error.message || error);
+      if (errStr.includes('429') || errStr.includes('"code":') || errStr.trim().startsWith('{')) {
+          displayError = "Đã có lỗi xảy ra với Oceep, vui lòng thử lại sau.";
+      }
+
       updateCurrentSessionMessages(prev => prev.map(msg => 
-        msg.id === aiMsgId ? { ...msg, content: `Lỗi: ${error.message || 'Không xác định'}` } : msg
+        msg.id === aiMsgId ? { ...msg, content: displayError } : msg
       ));
     } finally {
       setIsStreaming(false);
@@ -432,7 +440,8 @@ const App: React.FC = () => {
          
          {/* Upload */}
          <div className="relative group">
-            <button disabled={isStreaming || isLiveActive} onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50 ${isMobile ? 'flex items-center gap-3 w-full rounded-lg px-2 hover:bg-white/5' : ''}`}>
+            <button disabled={isStreaming || isLiveActive} onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50 ${isMobile ? 'flex items-center gap-3 w-full rounded-lg px-2 hover:bg-white/5' : ''}`}
+            >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                   {isMobile && <span className="text-sm font-semibold">Tải ảnh lên</span>}
             </button>
@@ -458,6 +467,7 @@ const App: React.FC = () => {
              </button>
              {!isMobile && <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">{isTutorMode ? "Tắt chế độ Gia Sư" : "Chế độ Gia Sư"}</span>}
          </div>
+    </>
   );
 
   return (
