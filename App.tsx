@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { streamGeminiResponse, generateImageWithPuter, ModelMode } from './services/geminiService';
+import { streamGeminiResponse, generateImageWithPuter, ModelMode, LiveClient } from './services/geminiService';
 import { ChatMessage, ChatSession, Role } from './types';
 import { Sidebar } from './components/Sidebar';
 import { MessageBubble } from './components/MessageBubble';
@@ -15,18 +15,22 @@ const App: React.FC = () => {
   const [isTutorMode, setIsTutorMode] = useState(false);
   const [modelMode, setModelMode] = useState<ModelMode>('fast');
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [stagedImage, setStagedImage] = useState<string | null>(null);
+  const [isLiveActive, setIsLiveActive] = useState(false);
   
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
   const stopGenerationRef = useRef<boolean>(false);
+  const liveClientRef = useRef<LiveClient | null>(null);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as Theme;
@@ -50,9 +54,19 @@ const App: React.FC = () => {
       if (modelSelectorRef.current && !modelSelectorRef.current.contains(event.target as Node)) {
         setShowModelSelector(false);
       }
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target as Node)) {
+        setShowMobileMenu(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    
+    return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        // Cleanup live session if active
+        if (liveClientRef.current) {
+            liveClientRef.current.disconnect();
+        }
+    };
   }, []);
 
   useEffect(() => {
@@ -121,6 +135,35 @@ const App: React.FC = () => {
 
   const handleStopGeneration = () => {
       stopGenerationRef.current = true;
+      setIsStreaming(false); // Force state update immediately
+  };
+
+  const handleLiveToggle = async () => {
+      if (isLiveActive) {
+          liveClientRef.current?.disconnect();
+          setIsLiveActive(false);
+      } else {
+          try {
+              if (!liveClientRef.current) {
+                  liveClientRef.current = new LiveClient();
+                  liveClientRef.current.onDisconnect = () => setIsLiveActive(false);
+              }
+              await liveClientRef.current.connect();
+              setIsLiveActive(true);
+          } catch (e: any) {
+              console.error("Failed to start live session", e);
+              // Clean up to ensure fresh retry
+              if (liveClientRef.current) {
+                  liveClientRef.current.disconnect();
+                  liveClientRef.current = null;
+              }
+              setIsLiveActive(false);
+              
+              // Clean message for user
+              const msg = e.message || "Không thể khởi động Live Chat.";
+              alert(msg);
+          }
+      }
   };
 
   const handleRegenerate = async (messageIndex: number) => {
@@ -217,6 +260,10 @@ const App: React.FC = () => {
           }
       }
     } catch (error: any) {
+      if (stopGenerationRef.current) {
+          // If manually stopped, don't show error, just keep what we have
+          return;
+      }
       console.error("Error:", error);
       updateCurrentSessionMessages(prev => prev.map(msg => 
         msg.id === aiMsgId ? { ...msg, content: `Lỗi: ${error.message || 'Không xác định'}` } : msg
@@ -248,6 +295,8 @@ const App: React.FC = () => {
       reader.onload = (ev) => {
         if (ev.target?.result) {
           setStagedImage(ev.target.result as string);
+          // Auto close mobile menu if open
+          setShowMobileMenu(false);
         }
       };
       reader.readAsDataURL(file);
@@ -271,6 +320,7 @@ const App: React.FC = () => {
          active: 'bg-blue-600 text-white',
          tutorActive: 'bg-purple-600 text-white',
          searchActive: 'bg-emerald-600 text-white',
+         liveActive: 'bg-red-500 text-white animate-pulse shadow-red-500/50',
          popup: 'bg-white border-gray-200 text-gray-800 shadow-xl'
        };
     }
@@ -281,6 +331,7 @@ const App: React.FC = () => {
        active: 'bg-blue-600 text-white',
        tutorActive: 'bg-purple-600 text-white',
        searchActive: 'bg-emerald-600 text-white',
+       liveActive: 'bg-red-500 text-white animate-pulse shadow-red-500/50',
        popup: 'bg-[#1e1e24] border-gray-700 text-white shadow-2xl'
     };
   };
@@ -302,9 +353,127 @@ const App: React.FC = () => {
 
   const currentModel = getModelInfo();
 
+  // --- Render Helpers ---
+
+  // Renders the tool buttons (Search, Image, Upload, Tutor, ModelSelector)
+  // Shared between Desktop row and Mobile popup
+  const renderTools = (isMobile: boolean = false) => (
+    <>
+         {/* Model Selector Toggle */}
+         <div className="relative group" ref={modelSelectorRef}>
+            <button 
+                onClick={(e) => { e.stopPropagation(); setShowModelSelector(!showModelSelector); }}
+                disabled={isLiveActive} 
+                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full transition-colors active:scale-95 transform ${showModelSelector ? footerColors.active : footerColors.icon} disabled:opacity-50 ${isMobile ? 'w-full justify-start hover:bg-white/5' : ''}`}
+            >
+                {currentModel.icon}
+                <span className="text-sm font-semibold max-w-[100px] truncate">{currentModel.name}</span>
+            </button>
+            
+            {/* Model Selector Popup */}
+            {showModelSelector && (
+                <div className={`absolute bottom-full left-0 mb-3 w-80 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
+                    <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase tracking-wider">Chọn chế độ</div>
+                    
+                    <button onClick={() => {setModelMode('fast'); setShowModelSelector(false); if(isMobile) setShowMobileMenu(false);}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'fast' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
+                        <div className={`p-1.5 rounded-full ${modelMode === 'fast' ? 'bg-blue-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        </div>
+                        <div className="flex-1">
+                            <div className={`font-semibold text-sm ${modelMode === 'fast' ? 'text-blue-500' : ''}`}>Nhanh</div>
+                            <div className="text-xs opacity-70">Nhanh chóng cho các tác vụ hàng ngày</div>
+                        </div>
+                        {modelMode === 'fast' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
+                    </button>
+
+                    <button onClick={() => {setModelMode('smart'); setShowModelSelector(false); if(isMobile) setShowMobileMenu(false);}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'smart' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
+                        <div className={`p-1.5 rounded-full ${modelMode === 'smart' ? 'bg-blue-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                        </div>
+                        <div className="flex-1">
+                            <div className={`font-semibold text-sm ${modelMode === 'smart' ? 'text-blue-500' : ''}`}>Thông minh</div>
+                            <div className="text-xs opacity-70">Suy nghĩ kỹ nhất, đưa ra câu trả lời đầy đủ và chi tiết</div>
+                        </div>
+                        {modelMode === 'smart' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
+                    </button>
+                </div>
+            )}
+         </div>
+
+         {/* Search Toggle */}
+         <div className="relative group">
+            <button 
+                onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+                disabled={isStreaming || isLiveActive}
+                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isSearchEnabled ? footerColors.searchActive : footerColors.icon} disabled:opacity-50 ${isMobile ? 'flex items-center gap-3 w-full rounded-lg px-2 hover:bg-white/5' : ''}`}
+            >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                {isMobile && <span className="text-sm font-semibold">Tìm kiếm Web</span>}
+            </button>
+            {!isMobile && (
+                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">
+                    {isSearchEnabled ? "Tắt tìm kiếm" : "Tìm kiếm: Tham khảo thông tin từ các nguồn khác"}
+                </span>
+            )}
+         </div>
+
+         {/* Image Gen Button */}
+         <div className="relative group">
+             <button 
+                onClick={() => { handleSend(undefined, true); if(isMobile) setShowMobileMenu(false); }}
+                disabled={!input.trim() || isStreaming || isLiveActive}
+                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50 ${isMobile ? 'flex items-center gap-3 w-full rounded-lg px-2 hover:bg-white/5' : ''}`}
+             >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                {isMobile && <span className="text-sm font-semibold">Tạo ảnh (Dream)</span>}
+             </button>
+             {!isMobile && <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">Tạo ảnh với Dream</span>}
+         </div>
+         
+         {/* Upload */}
+         <div className="relative group">
+            <button disabled={isStreaming || isLiveActive} onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50 ${isMobile ? 'flex items-center gap-3 w-full rounded-lg px-2 hover:bg-white/5' : ''}`}>
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                  {isMobile && <span className="text-sm font-semibold">Tải ảnh lên</span>}
+            </button>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              accept="image/*"
+              onChange={handleFileSelect}
+            />
+            {!isMobile && <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none">Tải ảnh</span>}
+         </div>
+
+         {/* Tutor Mode Toggle */}
+         <div className="relative group">
+             <button 
+                onClick={() => setIsTutorMode(!isTutorMode)}
+                disabled={isStreaming || isLiveActive}
+                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isTutorMode ? footerColors.tutorActive : footerColors.icon} disabled:opacity-50 ${isMobile ? 'flex items-center gap-3 w-full rounded-lg px-2 hover:bg-white/5' : ''}`}
+             >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" /></svg>
+                {isMobile && <span className="text-sm font-semibold">Chế độ Gia Sư</span>}
+             </button>
+             {!isMobile && <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">{isTutorMode ? "Tắt chế độ Gia Sư" : "Chế độ Gia Sư"}</span>}
+         </div>
+  );
+
   return (
     <div className={`relative flex h-screen w-screen overflow-hidden transition-colors duration-500 ${getThemeClasses()}`} style={theme === 'ocean' ? { backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1173&auto=format&fit=crop')" } : {}}>
       {theme === 'ocean' && <div className="absolute inset-0 bg-black/40 pointer-events-none" />}
+      
+      {/* Live Overlay Indicator */}
+      {isLiveActive && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 bg-red-500/90 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-3 backdrop-blur animate-fade-up">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+              </span>
+              <span className="font-semibold text-sm">Oceep Live</span>
+          </div>
+      )}
 
       {/* Sidebar Component */}
       <Sidebar 
@@ -324,7 +493,7 @@ const App: React.FC = () => {
         <header className="p-4 flex justify-between items-center z-20">
             <div className="flex items-center gap-4">
                 <div className="flex items-center text-xl font-semibold select-none">
-                    <svg width="28" height="28" viewBox="0 0 100 100">
+                    <svg width="28" height="28" viewBox="0 0 100 100" className={isStreaming ? "animate-breathing" : ""}>
                         <defs>
                             <radialGradient id="bubbleGradient" cx="0.3" cy="0.3" r="0.7">
                                 <stop offset="0%" style={{stopColor:'rgb(220,240,255)', stopOpacity:1}} />
@@ -388,7 +557,20 @@ const App: React.FC = () => {
         </main>
 
         {/* Footer Input */}
-        <footer className="w-full max-w-3xl mx-auto px-4 pb-4 z-20">
+        <footer className="w-full max-w-3xl mx-auto px-4 pb-4 z-20 relative">
+            
+            {/* Mobile Tool Menu Popup */}
+            {showMobileMenu && (
+                <div 
+                    ref={mobileMenuRef}
+                    className={`absolute bottom-full left-4 right-4 mb-2 rounded-xl p-2 z-30 shadow-2xl animate-scale-in origin-bottom-left border ${footerColors.popup}`}
+                >
+                    <div className="grid grid-cols-1 gap-1">
+                        {renderTools(true)}
+                    </div>
+                </div>
+            )}
+
             <div className={`relative flex flex-col backdrop-blur-lg rounded-[2rem] shadow-lg p-1.5 border transition-colors duration-300 ${footerColors.bg}`}>
                 
                 {/* Staged Image Preview */}
@@ -406,6 +588,19 @@ const App: React.FC = () => {
 
                 <div className="flex items-end w-full">
                     
+                    {/* Mobile Plus Button */}
+                    <div className="md:hidden pb-1.5 pl-1.5">
+                        <button 
+                            onClick={() => setShowMobileMenu(!showMobileMenu)}
+                            className={`w-9 h-9 flex items-center justify-center rounded-full transition-colors active:scale-95 ${showMobileMenu ? footerColors.active : footerColors.icon} ${isStreaming || isLiveActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={isStreaming || isLiveActive}
+                        >
+                            <svg className={`w-6 h-6 transition-transform duration-200 ${showMobileMenu ? 'rotate-45' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                        </button>
+                    </div>
+
                     {/* Auto-growing Textarea */}
                     <textarea 
                        ref={textareaRef}
@@ -421,107 +616,19 @@ const App: React.FC = () => {
                            handleSend();
                          }
                        }}
-                       placeholder={isTutorMode ? "Hỏi thầy giáo..." : "Bạn muốn biết gì?"} 
+                       placeholder={isTutorMode ? "Hỏi thầy giáo..." : (isLiveActive ? "Đang lắng nghe..." : "Bạn muốn biết gì?")} 
                        rows={1}
-                       disabled={isStreaming}
-                       className={`flex-grow bg-transparent border-none focus:ring-0 focus:outline-none text-lg pl-5 py-3 resize-none max-h-[150px] ${footerColors.input} disabled:opacity-50`}
+                       disabled={isStreaming || isLiveActive}
+                       className={`flex-grow bg-transparent border-none focus:ring-0 focus:outline-none text-lg pl-3 md:pl-5 py-3 resize-none max-h-[150px] ${footerColors.input} disabled:opacity-50`}
                     />
                     
                     <div className="flex items-center shrink-0 pr-1 pb-1.5 gap-1">
-                         {/* Model Selector Toggle */}
-                         <div className="relative group" ref={modelSelectorRef}>
-                            <button 
-                                onClick={() => setShowModelSelector(!showModelSelector)} 
-                                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full transition-colors active:scale-95 transform ${showModelSelector ? footerColors.active : footerColors.icon}`}
-                            >
-                                {currentModel.icon}
-                                <span className="text-sm font-semibold max-w-[100px] truncate hidden sm:block">{currentModel.name}</span>
-                            </button>
-                            
-                            {/* Model Selector Popup */}
-                            {showModelSelector && (
-                                <div className={`absolute bottom-full left-0 mb-3 w-80 rounded-xl border p-2 flex flex-col gap-1 z-50 animate-scale-in origin-bottom-left ${footerColors.popup}`}>
-                                    <div className="px-2 py-1 text-xs font-bold text-gray-500 uppercase tracking-wider">Chọn chế độ</div>
-                                    
-                                    <button onClick={() => {setModelMode('fast'); setShowModelSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'fast' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
-                                        <div className={`p-1.5 rounded-full ${modelMode === 'fast' ? 'bg-blue-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className={`font-semibold text-sm ${modelMode === 'fast' ? 'text-blue-500' : ''}`}>Nhanh</div>
-                                            <div className="text-xs opacity-70">Nhanh chóng cho các tác vụ hàng ngày</div>
-                                        </div>
-                                        {modelMode === 'fast' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
-                                    </button>
-
-                                    <button onClick={() => {setModelMode('smart'); setShowModelSelector(false)}} className={`flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${modelMode === 'smart' ? 'bg-blue-600/10' : 'hover:bg-gray-500/10'}`}>
-                                        <div className={`p-1.5 rounded-full ${modelMode === 'smart' ? 'bg-blue-600 text-white' : 'bg-gray-500/20 text-gray-400'}`}>
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className={`font-semibold text-sm ${modelMode === 'smart' ? 'text-blue-500' : ''}`}>Thông minh</div>
-                                            <div className="text-xs opacity-70">Suy nghĩ kỹ nhất, đưa ra câu trả lời đầy đủ và chi tiết</div>
-                                        </div>
-                                        {modelMode === 'smart' && <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>}
-                                    </button>
-                                </div>
-                            )}
+                         {/* Desktop Tools Row */}
+                         <div className="hidden md:flex items-center gap-1">
+                            {renderTools(false)}
                          </div>
 
-                         {/* Search Toggle (Compact) */}
-                         <div className="relative group">
-                            <button 
-                                onClick={() => setIsSearchEnabled(!isSearchEnabled)}
-                                disabled={isStreaming}
-                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isSearchEnabled ? footerColors.searchActive : footerColors.icon} disabled:opacity-50`}
-                            >
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                            </button>
-                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">
-                                {isSearchEnabled ? "Tắt tìm kiếm" : "Tìm kiếm: Tham khảo thông tin từ các nguồn khác"}
-                            </span>
-                         </div>
-
-                         {/* Image Gen Button */}
-                         <div className="relative group">
-                             <button 
-                                onClick={() => handleSend(undefined, true)}
-                                disabled={!input.trim() || isStreaming}
-                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50`}
-                             >
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                             </button>
-                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">Tạo ảnh với Dream</span>
-                         </div>
-                         
-                         {/* Upload */}
-                         <div className="relative group">
-                            <button disabled={isStreaming} onClick={() => fileInputRef.current?.click()} className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${footerColors.icon} disabled:opacity-50`}>
-                                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
-                            </button>
-                            <input 
-                              type="file" 
-                              ref={fileInputRef} 
-                              className="hidden" 
-                              accept="image/*"
-                              onChange={handleFileSelect}
-                            />
-                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none">Tải ảnh</span>
-                         </div>
-
-                         {/* Tutor Mode Toggle */}
-                         <div className="relative group">
-                             <button 
-                                onClick={() => setIsTutorMode(!isTutorMode)}
-                                disabled={isStreaming}
-                                className={`p-2.5 rounded-full transition-colors active:scale-90 transform ${isTutorMode ? footerColors.tutorActive : footerColors.icon} disabled:opacity-50`}
-                             >
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" /></svg>
-                             </button>
-                             <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-900 text-white text-xs rounded shadow opacity-0 group-hover:opacity-100 transition pointer-events-none z-50">{isTutorMode ? "Tắt chế độ Gia Sư" : "Chế độ Gia Sư"}</span>
-                         </div>
-
-                         {/* Send / Stop Button */}
+                         {/* Send / Stop / Live Button */}
                          {isStreaming ? (
                             <button onClick={handleStopGeneration} className="flex items-center justify-center w-11 h-11 bg-white text-black rounded-full transition-colors shrink-0 ml-1 shadow-lg active:scale-90 transform animate-pulse">
                                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
@@ -531,8 +638,17 @@ const App: React.FC = () => {
                                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
                              </button>
                          ) : (
-                             <button className={`flex items-center justify-center w-11 h-11 rounded-full transition-colors shrink-0 ml-1 cursor-default ${theme === 'light' ? 'bg-gray-200 text-gray-400' : 'bg-gray-200/20 text-gray-500'}`}>
-                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
+                             // Live Chat Toggle Button when input is empty
+                             <button 
+                                onClick={handleLiveToggle} 
+                                className={`flex items-center justify-center w-11 h-11 rounded-full transition-all shrink-0 ml-1 shadow-lg active:scale-90 transform ${isLiveActive ? footerColors.liveActive : (theme === 'light' ? 'bg-gray-200 text-gray-500 hover:bg-gray-300' : 'bg-gray-700/50 text-gray-300 hover:bg-gray-600/50')}`}
+                                title={isLiveActive ? "Dừng Live Chat" : "Live Chat"}
+                             >
+                                {isLiveActive ? (
+                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                ) : (
+                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                                )}
                              </button>
                          )}
                     </div>

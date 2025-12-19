@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 import { ChatMessage, Role } from '../types';
 
 declare const process: any;
@@ -7,6 +7,247 @@ const API_KEY = process.env.API_KEY || "";
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export type ModelMode = 'fast' | 'smart';
+
+// --- Audio Helpers (Live API) ---
+
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function encode(bytes: Uint8Array) {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
+function createBlob(data: Float32Array): { data: string; mimeType: string } {
+  const l = data.length;
+  const int16 = new Int16Array(l);
+  for (let i = 0; i < l; i++) {
+    int16[i] = data[i] * 32768;
+  }
+  return {
+    data: encode(new Uint8Array(int16.buffer)),
+    mimeType: 'audio/pcm;rate=16000',
+  };
+}
+
+export class LiveClient {
+    private inputAudioContext: AudioContext | null = null;
+    private outputAudioContext: AudioContext | null = null;
+    private inputSource: MediaStreamAudioSourceNode | null = null;
+    private processor: ScriptProcessorNode | null = null;
+    private outputNode: AudioNode | null = null;
+    private stream: MediaStream | null = null;
+    private nextStartTime = 0;
+    private sessionPromise: Promise<any> | null = null;
+    private session: any = null;
+    private sources = new Set<AudioBufferSourceNode>();
+    public onDisconnect: () => void = () => {};
+
+    constructor() {}
+
+    async connect() {
+        // Security Check
+        if (!window.isSecureContext) {
+            throw new Error("Live Chat yêu cầu kết nối bảo mật (HTTPS) hoặc localhost.");
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+             throw new Error("Trình duyệt không hỗ trợ thu âm.");
+        }
+
+        // Step 1: Request Microphone Access with specific error handling
+        try {
+            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (error: any) {
+            // Handle specific errors without excessive console noise
+            if (error.name === 'NotFoundError' || error.message?.includes('not found')) {
+                 throw new Error("Không tìm thấy thiết bị microphone. Vui lòng kiểm tra kết nối.");
+            }
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                 throw new Error("Quyền truy cập microphone bị từ chối. Vui lòng cho phép trong cài đặt trình duyệt.");
+            }
+            console.error("Microphone Access Error:", error);
+            throw new Error("Không thể truy cập microphone: " + (error.message || "Lỗi không xác định"));
+        }
+
+        // Step 2: Initialize Audio Contexts safely
+        try {
+            this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+            this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            
+            // Resume contexts if suspended
+            if (this.inputAudioContext.state === 'suspended') await this.inputAudioContext.resume();
+            if (this.outputAudioContext.state === 'suspended') await this.outputAudioContext.resume();
+
+            this.outputNode = this.outputAudioContext.createGain();
+            this.outputNode.connect(this.outputAudioContext.destination);
+        } catch (error: any) {
+             console.error("Audio Context Init Error:", error);
+             this.disconnect();
+             throw new Error("Không thể khởi tạo hệ thống âm thanh. Vui lòng thử lại.");
+        }
+
+        // Step 3: Connect to Gemini Live
+        const config = { 
+            responseModalities: [Modality.AUDIO],
+            systemInstruction: "Your name is Oceep. You are a helpful AI assistant. Keep responses concise and natural for voice conversation."
+        };
+
+        const model = 'gemini-2.5-flash-native-audio-preview-12-2025';
+
+        try {
+            this.sessionPromise = ai.live.connect({
+                model: model,
+                config: config,
+                callbacks: {
+                    onopen: () => {
+                        console.debug('Live Session Opened');
+                        this.startAudioInput();
+                    },
+                    onmessage: (message: LiveServerMessage) => this.handleMessage(message),
+                    onerror: (e: any) => {
+                        console.error('Live Error:', e);
+                        this.disconnect();
+                    },
+                    onclose: (e: any) => {
+                        console.debug('Live Session Closed', e);
+                        this.disconnect();
+                    }
+                }
+            });
+            this.session = await this.sessionPromise;
+        } catch (error: any) {
+            console.error("Gemini Live Connection Error:", error);
+            this.disconnect(); // Clean up resources
+            throw error;
+        }
+    }
+
+    private startAudioInput() {
+        if (!this.inputAudioContext || !this.stream || !this.session) return;
+
+        try {
+            this.inputSource = this.inputAudioContext.createMediaStreamSource(this.stream);
+            this.processor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
+
+            this.processor.onaudioprocess = (e) => {
+                const inputData = e.inputBuffer.getChannelData(0);
+                const pcmBlob = createBlob(inputData);
+                this.session.sendRealtimeInput({ media: pcmBlob });
+            };
+
+            this.inputSource.connect(this.processor);
+            this.processor.connect(this.inputAudioContext.destination);
+        } catch (e) {
+            console.error("Error starting audio input:", e);
+            this.disconnect();
+        }
+    }
+
+    private async handleMessage(message: LiveServerMessage) {
+        if (!this.outputAudioContext || !this.outputNode) return;
+
+        const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+            this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+            try {
+                const audioBuffer = await decodeAudioData(
+                    decode(base64Audio),
+                    this.outputAudioContext,
+                    24000,
+                    1
+                );
+                
+                const source = this.outputAudioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(this.outputNode);
+                
+                source.addEventListener('ended', () => {
+                    this.sources.delete(source);
+                });
+
+                source.start(this.nextStartTime);
+                this.nextStartTime += audioBuffer.duration;
+                this.sources.add(source);
+            } catch (e) {
+                console.error("Error decoding audio:", e);
+            }
+        }
+
+        const interrupted = message.serverContent?.interrupted;
+        if (interrupted) {
+            this.sources.forEach(src => {
+                try { src.stop(); } catch(e){}
+            });
+            this.sources.clear();
+            this.nextStartTime = 0;
+        }
+    }
+
+    disconnect() {
+        if (this.session) {
+            try {
+                this.session.close();
+            } catch (e) { console.error(e); }
+            this.session = null;
+        }
+        
+        if (this.processor) {
+            try { this.processor.disconnect(); } catch (e) {}
+            this.processor = null;
+        }
+        if (this.inputSource) {
+            try { this.inputSource.disconnect(); } catch (e) {}
+            this.inputSource = null;
+        }
+        if (this.stream) {
+            try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+            this.stream = null;
+        }
+        if (this.inputAudioContext) {
+            try { this.inputAudioContext.close(); } catch (e) {}
+            this.inputAudioContext = null;
+        }
+        if (this.outputAudioContext) {
+            try { this.outputAudioContext.close(); } catch (e) {}
+            this.outputAudioContext = null;
+        }
+        this.sources.clear();
+        this.onDisconnect();
+    }
+}
+
+// --- End Audio Helpers ---
 
 // Helper to convert blob to base64 if needed, but we deal with base64 strings mostly
 const getBase64Parts = (base64String: string) => {
@@ -19,9 +260,6 @@ const getBase64Parts = (base64String: string) => {
 };
 
 export const generateImageWithPuter = async (prompt: string): Promise<string> => {
-    // Replaced with Google Gemini/Imagen generation
-    // Using gemini-2.5-flash-image or imagen if available.
-    // Since we are in the 'geminiService', we'll use the ai client.
     try {
         const response = await ai.models.generateImages({
             model: 'imagen-3.0-generate-001',
@@ -79,13 +317,14 @@ IMPORTANT INSTRUCTION:
 Before answering the user, you MUST first perform a "Thinking Process" to analyze the request, plan your answer, or think step-by-step.
 1. Write this thinking process in ENGLISH.
 2. Enclose the thinking process strictly inside <think> and </think> tags.
-3. After the </think> tag, provide your final response to the user in VIETNAMESE (unless the user explicitly asks for another language).
+3. The thinking block represents your internal monologue. Do NOT mention "Rules" or "System Instructions" inside it. Just analyze the user's request and plan the response naturally.
+4. After the </think> tag, provide your final response to the user in VIETNAMESE (unless the user explicitly asks for another language).
 
 Example:
 <think>
-User is asking for... I should explain...
+The user is asking about [topic]. I need to consider [aspects]. I will structure the answer by...
 </think>
-Xin chào, đây là câu trả lời của tôi...
+[Final Answer in Vietnamese]
 `;
   } else {
     // Fast mode instruction (Nhanh) - Direct answer
