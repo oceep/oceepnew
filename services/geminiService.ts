@@ -4,7 +4,10 @@ import { ChatMessage, Role } from '../types';
 declare const process: any;
 
 const API_KEY = process.env.API_KEY || "";
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+const SMART_KEY = process.env.SMART_KEY || "";
+
+// Default client for general tasks (Image, Live, Fast Chat)
+const defaultAi = new GoogleGenAI({ apiKey: API_KEY });
 
 export type ModelMode = 'fast' | 'smart';
 
@@ -126,7 +129,8 @@ export class LiveClient {
         const model = 'gemini-2.5-flash-native-audio-preview-12-2025';
 
         try {
-            this.sessionPromise = ai.live.connect({
+            // Use defaultAi (API_KEY) for Live
+            this.sessionPromise = defaultAi.live.connect({
                 model: model,
                 config: config,
                 callbacks: {
@@ -261,7 +265,8 @@ const getBase64Parts = (base64String: string) => {
 
 export const generateImageWithPuter = async (prompt: string): Promise<string> => {
     try {
-        const response = await ai.models.generateImages({
+        // Use defaultAi (API_KEY)
+        const response = await defaultAi.models.generateImages({
             model: 'imagen-3.0-generate-001',
             prompt: prompt,
             config: {
@@ -291,12 +296,16 @@ export const streamGeminiResponse = async function* (
   
   // Model Mapping
   let modelId = 'gemini-3-flash-preview'; // Default / Fast
+  let useSmartKey = false;
+
   if (modelMode === 'smart') {
       modelId = 'gemini-3-pro-preview';
+      useSmartKey = true;
   }
   // Tutor always uses flash for speed in this context unless overridden
   if (isTutorMode) {
       modelId = 'gemini-3-flash-preview';
+      useSmartKey = false; // Tutor uses standard key
   }
 
   // Configuration
@@ -371,8 +380,14 @@ QUY TẮC CỐT LÕI:
         };
     });
 
+  // Determine which client/key to use
+  let chatAi = defaultAi;
+  if (useSmartKey && SMART_KEY) {
+      chatAi = new GoogleGenAI({ apiKey: SMART_KEY });
+  }
+
   // Create Chat Session
-  const chat = ai.chats.create({
+  const chat = chatAi.chats.create({
       model: modelId,
       config: config,
       history: historyContents
@@ -389,7 +404,6 @@ QUY TẮC CỐT LÕI:
   currentMessageParts.push({ text: newMessage });
 
   try {
-      // FIX: sendMessageStream expects an object with 'message' property
       const result = await chat.sendMessageStream({ message: currentMessageParts });
       
       for await (const chunk of result) {
@@ -398,11 +412,7 @@ QUY TẮC CỐT LÕI:
           const text = chunk.text;
           if (text) yield text;
 
-          // Check for grounding metadata in the chunk to pass back?
-          // The current app architecture expects string chunks mostly.
-          // However, we might need to handle metadata. 
-          // For now, let's just yield text. 
-          // If we want to return the full object for metadata processing in App.tsx:
+          // Check for grounding metadata in the chunk to pass back
           if (chunk.candidates?.[0]?.groundingMetadata) {
              yield chunk.candidates[0].groundingMetadata;
           }

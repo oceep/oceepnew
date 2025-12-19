@@ -92,7 +92,8 @@ export default defineConfig({
   define: {
     // Define process.env to ensure it exists as an object, preventing crash on access
     'process.env': {
-      API_KEY: process.env.API_KEY || ''
+      API_KEY: process.env.API_KEY || '',
+      SMART_KEY: process.env.SMART_KEY || ''
     }
   }
 })

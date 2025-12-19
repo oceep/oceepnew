@@ -36,19 +36,29 @@ const App: React.FC = () => {
     const savedTheme = localStorage.getItem('theme') as Theme;
     if (savedTheme) setTheme(savedTheme);
 
+    // Load saved sessions history, but do not automatically open the last one.
+    // Always start with a new empty conversation.
     const savedSessions = localStorage.getItem('oceep_sessions');
+    let loadedSessions: ChatSession[] = [];
     if (savedSessions) {
       try {
-        const parsed = JSON.parse(savedSessions);
-        setSessions(parsed);
-        if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
-        else createNewSession();
+        loadedSessions = JSON.parse(savedSessions);
       } catch (e) {
-        createNewSession();
+        loadedSessions = [];
       }
-    } else {
-      createNewSession();
     }
+    
+    // Create new session
+    const newSession: ChatSession = {
+      id: uuidv4(),
+      title: 'Cuộc trò chuyện mới',
+      messages: [],
+      createdAt: Date.now()
+    };
+    
+    // Set sessions with new one at the top
+    setSessions([newSession, ...loadedSessions]);
+    setCurrentSessionId(newSession.id);
 
     const handleClickOutside = (event: MouseEvent) => {
       if (modelSelectorRef.current && !modelSelectorRef.current.contains(event.target as Node)) {
